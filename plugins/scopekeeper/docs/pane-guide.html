@@ -1,0 +1,376 @@
+<title>Scopekeeper Pane Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column; each section pairs a terminal-accurate mockup with what every part does. */
+:root {
+  --bg: #f3f5f4;
+  --surface: #ffffff;
+  --ink: #1b2226;
+  --muted: #59646a;
+  --rule: #d8dedc;
+  --accent: #2c6b64;
+  --accent-soft: #e2efec;
+  --term-bg: #1c2327;
+  --term-fg: #d6dde0;
+  --term-dim: #7d898f;
+  --term-yellow: #e2b445;
+  --term-green: #74c27a;
+  --term-red: #e5736f;
+  --term-accent: #7db4f5;
+  --kbd-bg: #ffffff;
+  --kbd-edge: #bfc8c5;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12171a; --surface: #182024; --ink: #e2e8ea; --muted: #98a4a9; --rule: #29333a;
+    --accent: #6cb7ad; --accent-soft: #1b2e2c; --term-bg: #0b0f12; --term-fg: #d6dde0; --term-dim: #7d898f;
+    --kbd-bg: #1f282d; --kbd-edge: #3a464d; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12171a; --surface: #182024; --ink: #e2e8ea; --muted: #98a4a9; --rule: #29333a;
+  --accent: #6cb7ad; --accent-soft: #1b2e2c; --term-bg: #0b0f12; --term-fg: #d6dde0; --term-dim: #7d898f;
+  --kbd-bg: #1f282d; --kbd-edge: #3a464d; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+}
+.page {
+  max-width: 820px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+  display: grid;
+  gap: 56px;
+}
+h1, h2, h3 { line-height: 1.2; text-wrap: balance; margin: 0; }
+h1 { font-size: 2.1rem; font-weight: 600; letter-spacing: -0.01em; }
+h2 { font-size: 1.45rem; font-weight: 600; }
+h3 { font-size: 1.05rem; font-weight: 600; }
+p { margin: 0; max-width: 66ch; }
+a { color: var(--accent); }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+
+header.intro { display: grid; gap: 14px; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.lede { font-size: 1.08rem; color: var(--muted); }
+
+nav.toc { display: flex; flex-wrap: wrap; gap: 8px; }
+nav.toc a {
+  font-size: 0.88rem; text-decoration: none; color: var(--ink);
+  border: 1px solid var(--rule); background: var(--surface);
+  padding: 4px 12px; border-radius: 999px;
+}
+nav.toc a:hover, nav.toc a:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+
+section { display: grid; gap: 18px; scroll-margin-top: 16px; }
+.section-head { display: grid; gap: 6px; }
+.section-head p { color: var(--muted); }
+
+/* The pane mockups: the terminal's own characters, at the pane's real column widths. */
+.term-wrap { overflow-x: auto; border-radius: 10px; background: var(--term-bg); }
+pre.term {
+  margin: 0; padding: 18px 20px;
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.55;
+  color: var(--term-fg); background: var(--term-bg);
+  min-width: max-content;
+}
+.term .dim { color: var(--term-dim); }
+.term .b { font-weight: 600; }
+.term .y { color: var(--term-yellow); }
+.term .g { color: var(--term-green); }
+.term .r { color: var(--term-red); }
+.term .pri { color: var(--term-accent); }
+.term .inv { background: var(--term-fg); color: var(--term-bg); }
+.caption { font-size: 0.85rem; color: var(--muted); }
+
+dl.parts { margin: 0; display: grid; gap: 0; border-top: 1px solid var(--rule); }
+dl.parts > div {
+  display: grid; grid-template-columns: minmax(150px, 220px) 1fr; gap: 16px;
+  padding: 12px 0; border-bottom: 1px solid var(--rule);
+}
+dl.parts dt { font-family: var(--font-mono); font-size: 0.86rem; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+dl.parts dd { margin: 0; min-width: 0; }
+dl.parts dd p + p { margin-top: 6px; }
+@media (max-width: 560px) {
+  dl.parts > div { grid-template-columns: 1fr; gap: 4px; }
+}
+
+kbd {
+  font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600;
+  background: var(--kbd-bg); color: var(--ink);
+  border: 1px solid var(--kbd-edge); border-bottom-width: 2px;
+  border-radius: 5px; padding: 1px 6px; white-space: nowrap;
+}
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--rule); }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; background: var(--bg); }
+td.key { white-space: nowrap; }
+
+.pill { display: inline-block; font-family: var(--font-mono); font-size: 0.78rem; padding: 0 7px; border-radius: 999px; border: 1px solid var(--rule); }
+.pill.warn { color: #8a6100; border-color: #e6c66f; background: #fdf4dc; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pill.warn { color: #f0c860; border-color: #6d5718; background: #2a2412; } }
+:root[data-theme="dark"] .pill.warn { color: #f0c860; border-color: #6d5718; background: #2a2412; }
+
+.note {
+  border-left: 3px solid var(--term-yellow);
+  background: var(--surface);
+  padding: 12px 16px; border-radius: 0 8px 8px 0;
+  font-size: 0.95rem;
+}
+.note strong { font-weight: 600; }
+
+.flow { display: grid; gap: 10px; margin: 0; padding-left: 1.3em; }
+.flow li { padding-left: 4px; max-width: 66ch; }
+
+footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--rule); padding-top: 18px; }
+
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="page">
+  <header class="intro">
+    <span class="eyebrow">scopekeeper · /scope</span>
+    <h1>Scopekeeper Pane Guide</h1>
+    <p class="lede">The pane opened by <code>/scope</code> shows what is installed globally in Claude Code, how much you use each piece and where, and the per-project combos that replace them. This guide walks through each view and every key.</p>
+    <nav class="toc" aria-label="Sections">
+      <a href="#moving">Moving around</a>
+      <a href="#header">Header</a>
+      <a href="#globals">Globals tab</a>
+      <a href="#combos">Combos tab</a>
+      <a href="#confirm">Confirmations</a>
+      <a href="#keys">All keys</a>
+      <a href="#commands">Commands</a>
+    </nav>
+  </header>
+
+  <section id="moving">
+    <div class="section-head">
+      <h2>Moving around</h2>
+      <p>The pane sits beside the conversation when the terminal is wide enough (fullscreen layout, 110 columns or more) and above the prompt otherwise. It opens with the keyboard, the cursor on the first row.</p>
+    </div>
+    <dl class="parts">
+      <div><dt><kbd>Tab</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd><p>Move the cursor, one visible line at a time. Moving never opens or closes anything, so the rows stay where they are.</p></dd></div>
+      <div><dt>Letter keys</dt><dd><p>Every action shows its key in front of it (<code>k: Keep global</code>) and works while the pane has the keyboard.</p></dd></div>
+      <div><dt><kbd>Enter</kbd></dt><dd><p>Press what the cursor is on: a global or combo row opens right under it, its actions first and its details below them (the open row is marked <code>›</code>; Enter on it again closes it), a project row of a combo toggles it there, a button runs.</p></dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd><p>Hand the keyboard back to the prompt. The pane stays open and keeps updating.</p></dd></div>
+      <div><dt>Back into the pane</dt><dd><p>Click it, or press <kbd>Ctrl</kbd>+<kbd>X</kbd> then <kbd>Tab</kbd>. Running <code>/scope</code> again also brings it back with the keyboard.</p></dd></div>
+      <div><dt>Close</dt><dd><p>Use the pane's close mark. Nothing is lost: the data lives in the plugin, and <code>/scope</code> reopens it.</p></dd></div>
+    </dl>
+  </section>
+
+  <section id="header">
+    <div class="section-head">
+      <h2>Header</h2>
+      <p>Always at the top, on both tabs: what was found, what is waiting on you, and the keys. The local pane puts its keys in the same row under its header; both end with what Enter does on the row under the cursor.</p>
+    </div>
+    <div class="term-wrap"><pre class="term"><span class="dim">7 globals · 5 combos · usage since Jun 9</span>
+<span class="y">▸ 4 unsorted · 1 to adopt · 3 used but off · 1 stale</span>
+<span class="pri">g</span>: <span class="b">Globals</span>  <span class="pri">c</span>: <span class="dim">Combos</span>  <span class="pri">a</span>: Back to local  <span class="pri">r</span>: Rescan  <span class="pri">s</span>: Set up shell  <span class="pri">t</span>: Let Claude triage
+<span class="y">⟳ Enabling design in ~/Projects/termkit…</span>
+<span class="r">! cc-* functions are not loaded by ~/.bashrc and ~/.bash_profile</span>
+<span class="dim">Reading your transcripts for usage history…</span></pre></div>
+    <p class="caption">All optional lines shown at once. Normally you see the first three.</p>
+    <dl class="parts">
+      <div><dt>usage since Jun 9</dt><dd><p>The oldest use scopekeeper has on record. Claude Code deletes old transcripts, so a count of 0 means unused since that date, not unused ever.</p></dd></div>
+      <div><dt><span class="y">▸</span> waiting line</dt><dd>
+        <p><b>unsorted</b>: globals you haven't decided about. <b>to adopt</b>: globals a combo covers that are still installed everywhere. <b>used but off</b>: projects where you used a combo's tools but it is off. <b>stale</b>: projects where a combo sat unused past the stale limit.</p>
+        <p>When nothing waits it turns green: <span class="g">✓ Nothing waiting on you</span>. The status line repeats the unsorted and to-adopt counts.</p>
+      </dd></div>
+      <div><dt><kbd>g</kbd> Globals · <kbd>c</kbd> Combos</dt><dd><p>Switch tabs. The current tab is bold and underlined.</p></dd></div>
+      <div><dt><kbd>r</kbd> Rescan</dt><dd><p>Re-read what is installed and where each combo is on. The yellow line shows while it runs. The pane also rescans by itself after every action.</p></dd></div>
+      <div><dt><kbd>s</kbd> Set up shell</dt><dd><p>Only shown when your shell doesn't load the <code>cc-*</code> functions yet. Asks once, then adds one line to <code>~/.zshrc</code> (zsh) or to <code>~/.bashrc</code> and the bash login file.</p></dd></div>
+      <div><dt><kbd>t</kbd> Let Claude triage</dt><dd><p>Only shown when something is unsorted. Claude works out how each unsorted item was installed, groups what belongs together, asks you about each group, and saves combos or keep-globals. Claude never installs or removes anything here; you do that from the pane.</p></dd></div>
+      <div><dt><kbd>a</kbd> Back to local</dt><dd><p>Closes this pane and opens the local one (<em>Scope · Local</em>). Only one of the two is open at a time.</p></dd></div>
+      <div><dt><span class="r">!</span> red lines</dt><dd><p>Something to fix, such as the shell not loading <code>cc-*</code>, a shell like fish that can't, or no <code>python3</code> to read past transcripts with.</p></dd></div>
+    </dl>
+  </section>
+
+  <section id="globals">
+    <div class="section-head">
+      <h2>Globals tab</h2>
+      <p>Every plugin, skill, agent and MCP server installed at user scope, with your real usage. Unsorted items come first, then the ones waiting to be adopted, each by most used. Keep-globals fold into one row at the end.</p>
+    </div>
+    <div class="term-wrap"><pre class="term"><span class="dim">──────────────────────────────────────────────────────────────</span>
+<span class="dim">  kind   name                    calls last  proj status</span>
+<span class="b">› </span><span class="dim">skill  </span><span class="b">improve                 </span><span class="dim">17    7d    3p   </span><span class="y">new</span>
+    <span class="pri">m</span>: Make a combo  <span class="pri">k</span>: Keep global  <span class="pri">x</span>: Remove
+<span class="dim">    Unsorted: keep it global if you use it everywhere, or make
+    a combo so it loads only where you need it.
+    ~/.claude/skills/improve</span>
+    ~/Projects/mobile-app                        <span class="dim">14    7d</span>
+    ~/Projects/release-tooling                   <span class="dim">2     9d</span>
+    ~/Projects/symbols-toolbox                   <span class="dim">1     40d</span>
+
+  <span class="dim">skill  </span>sound-effects           <span class="dim">8     5d    2p   </span><span class="y">new</span>
+  <span class="dim">skill  </span>orca-cli                <span class="dim">0     —     0p   </span><span class="y">new</span>
+  <span class="dim">skill  </span>orchestration           <span class="dim">0     —     0p   </span><span class="y">new</span>
+  <span class="dim">mcp    </span>blender                 <span class="dim">546   10d   1p   </span><span class="y">→ blender</span>
+<span class="dim">▸ Kept global (2)</span></pre></div>
+    <p class="caption">With <code>improve</code> opened, below the header.</p>
+
+    <h3>The columns</h3>
+    <dl class="parts">
+      <div><dt>kind</dt><dd><p><code>plugin</code>, <code>skill</code>, <code>agent</code> or <code>mcp</code>. Dropped, with <code>proj</code>, when the pane is narrow.</p></dd></div>
+      <div><dt>calls</dt><dd><p>Recorded uses: skill runs, MCP tool calls, agent runs and slash commands. A plugin counts everything it brings (its skills, its MCP server). <code>…</code> while past transcripts are still being read.</p></dd></div>
+      <div><dt>last</dt><dd><p>Time since the last use: minutes, hours, days, months, or <code>—</code> for none on record.</p></dd></div>
+      <div><dt>proj</dt><dd><p>How many projects used it. A project is a repo's root folder (worktrees count as their main repo), or the folder itself outside git. Your home folder never counts.</p></dd></div>
+      <div><dt>status</dt><dd>
+        <p><span class="pill warn">new</span> not decided yet: either keep it global or turn it into a combo.</p>
+        <p><span class="pill warn">→ blender</span> the combo <code>blender</code> covers it, but it is still installed globally. Adopt finishes the move.</p>
+        <p><span class="pill">keep</span> you chose to keep it global. These sit under <em>Kept global</em>; press <kbd>Enter</kbd> on that row to show them.</p>
+      </dd></div>
+    </dl>
+
+    <h3>The open item</h3>
+    <p><kbd>Enter</kbd> on an item opens its details under it, and closes them again: the install path, the projects that used it (up to 5, most used first), what its status means, and its actions. A key acts on the open item. The actions depend on its status:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Status</th><th>Action</th><th>Key</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>new or keep</td><td>Make a combo</td><td class="key"><kbd>m</kbd></td><td>Starts a triage with Claude for this one item.</td></tr>
+        <tr><td>new</td><td>Keep global</td><td class="key"><kbd>k</kbd></td><td>Marks it as intentionally global. It stops counting as unsorted.</td></tr>
+        <tr><td>keep</td><td>Unkeep</td><td class="key"><kbd>u</kbd></td><td>Puts it back to unsorted.</td></tr>
+        <tr><td>→ combo</td><td>Adopt &lt;combo&gt;</td><td class="key"><kbd>o</kbd></td><td>Same as Adopt on the Combos tab (below).</td></tr>
+        <tr><td>any</td><td>Remove</td><td class="key"><kbd>x</kbd></td><td>Takes it out of the global setup after asking, saying how much it was used and since when. Plugins and MCP servers are uninstalled; skill and agent folders are moved to <code>~/.claude/scopekeeper/backups/</code>, never deleted. Not offered until past transcripts are read, so a 0 that only means "not counted yet" can't mislead you.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The dim lines under <em>Recent</em> at the bottom are the last three things the pane did; the newest is shown whole. A question you cancelled leaves no line, as nothing changed.</p>
+  </section>
+
+  <section id="combos">
+    <div class="section-head">
+      <h2>Combos tab</h2>
+      <p>Each combo is a set of tools you turn on per project with <code>cc-&lt;name&gt;</code> and off with <code>cc-&lt;name&gt;-off</code>. This tab shows where each one is on, and what is left to do.</p>
+    </div>
+    <div class="term-wrap"><pre class="term"><span class="dim">──────────────────────────────────────────────────────────────</span>
+<span class="dim">  combo    what                               on in to do</span>
+  <span class="b">blender  </span><span class="dim">Blender MCP + blender-kiln         </span>2     <span class="y">adopt</span>
+<span class="b">› design   </span><span class="dim">Impeccable (skill + agents) + gen… </span>3     <span class="y">prune 1</span>
+    <span class="pri">p</span>: Prune 1 stale
+    · runs: npx -y impeccable@latest install --project -y --no-hooks
+      --providers=claude --force
+<span class="dim">    · plugin genjutsu@genjutsu
+    From a shell: cc-design · cc-design-off
+    Enter on a project turns design on or off there.</span>
+    <span class="g">✓ </span>~/Projects/symbols-toolbox       <span class="dim">7     7d    </span>
+    <span class="g">✓ </span>~/Projects/store-web             <span class="dim">1     4mo   </span><span class="y">stale</span>
+    <span class="g">✓ </span>~/Projects/internal-scripts      <span class="dim">0     —     </span>
+
+  <span class="b">godot    </span><span class="dim">Godot editor MCP                   </span>1
+  <span class="b">remotion </span><span class="dim">Remotion video skills              </span>1
+  <span class="b">vercel   </span><span class="dim">Vercel plugin (skills, agents, V… </span><span class="dim">—</span>     <span class="y">turn on 2</span></pre></div>
+    <p class="caption">With <code>design</code> opened, below the header.</p>
+
+    <h3>A combo row</h3>
+    <dl class="parts">
+      <div><dt>combo and what</dt><dd><p>The combo and its description. The description is dropped when the pane is narrow.</p></dd></div>
+      <div><dt>on in</dt><dd><p>How many projects have every part of the combo set up; <code>—</code> for none.</p></dd></div>
+      <div><dt>to do</dt><dd>
+        <p><span class="pill warn">adopt</span> some part is still installed globally. Adopt removes it once the projects have it.</p>
+        <p><span class="pill warn">turn on 2</span> projects where you used these tools but the combo is off. Adopt, or Enter on each project, turns it on there.</p>
+        <p><span class="pill warn">prune 1</span> projects where it went unused past the stale limit. Prune takes it out of them.</p>
+      </dd></div>
+    </dl>
+
+    <h3>The open combo</h3>
+    <p><kbd>Enter</kbd> on a combo opens its details under it, and closes them again: every part it installs (a command it runs is shown in full), its two shell commands, what is left to do, one row per project (newest use first), then its actions. A key acts on the open combo.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Mark</th><th>Tag</th><th>Meaning</th><th>Enter on the row</th></tr></thead>
+      <tbody>
+        <tr><td><span style="color:var(--term-green)">✓</span></td><td></td><td>Every part is set up in this project.</td><td>Asks, then turns it off there.</td></tr>
+        <tr><td><span style="color:var(--term-green)">✓</span></td><td><span class="pill warn">stale</span></td><td>On, but neither used nor enabled there for 30 days or more (change the number in <code>/config</code>). A combo you just enabled counts from the day you enabled it.</td><td>Asks, then turns it off there.</td></tr>
+        <tr><td><span style="color:var(--term-yellow)">◐</span></td><td><span class="pill warn">partial</span></td><td>Some parts are set up, some aren't (say, the plugin but not the MCP server).</td><td>Asks, saying what it installs, then turns it on, which completes it.</td></tr>
+        <tr><td><span style="color:var(--term-yellow)">+</span></td><td><span class="pill warn">used, off</span></td><td>You used these tools there, but the combo is off.</td><td>Asks, saying what it installs, then turns it on there.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Action</th><th>Key</th><th>Shown when</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>Adopt</td><td class="key"><kbd>o</kbd></td><td>Some part is still global, or a project shows <em>used, off</em>.</td><td>Turns the combo on in every <em>used, off</em> project, checks each one worked, then removes the global installs (after a backup). If any project fails, it stops there and keeps the globals. You can also pick <em>Only enable</em> to skip the removal.</td></tr>
+        <tr><td>Enable here</td><td class="key"><kbd>e</kbd></td><td>This session's project is known to scopekeeper and the combo isn't fully on there.</td><td>Asks, saying what it installs, then turns the combo on in the project you started Claude in.</td></tr>
+        <tr><td>Prune N stale</td><td class="key"><kbd>p</kbd></td><td>A project shows <em>stale</em>.</td><td>Asks once, listing the projects, then turns the combo off in each.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note"><strong>vercel shows turn on 2.</strong> You used it in web-app and internal-scripts, and it is no longer installed globally, so it is on nowhere. Adopt turns it back on in both projects; leave it if you don't want that.</div>
+    <p>After any change in a project, run <code>/reload-plugins</code> in Claude sessions already open there.</p>
+  </section>
+
+  <section id="confirm">
+    <div class="section-head">
+      <h2>Confirmations</h2>
+      <p>Anything that installs, uninstalls, moves files or edits a shell file asks first, in Claude's question dialog.</p>
+    </div>
+    <ol class="flow">
+      <li>The question says exactly what will happen: the project paths, the installs it would remove, and what enabling a combo installs and runs.</li>
+      <li>Pick an answer with the arrow keys or its number, then <kbd>Enter</kbd>.</li>
+      <li><kbd>Esc</kbd> on the dialog counts as cancel. Nothing changes.</li>
+      <li>The result appears as a short notice, and in the pane: under <em>Recent</em> in the advanced pane, as <em>Last:</em> in the local one. Cancelling only shows the notice.</li>
+    </ol>
+  </section>
+
+  <section id="keys">
+    <div class="section-head">
+      <h2>All keys</h2>
+      <p>Letters work while the pane has the keyboard. The pane shows each one beside its action.</p>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Key</th><th>Where</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td class="key"><kbd>g</kbd></td><td>anywhere</td><td>Globals tab</td></tr>
+        <tr><td class="key"><kbd>c</kbd></td><td>anywhere</td><td>Combos tab</td></tr>
+        <tr><td class="key"><kbd>r</kbd></td><td>anywhere</td><td>Rescan</td></tr>
+        <tr><td class="key"><kbd>t</kbd></td><td>when something is unsorted</td><td>Let Claude triage</td></tr>
+        <tr><td class="key"><kbd>s</kbd></td><td>when the shell isn't set up</td><td>Set up shell</td></tr>
+        <tr><td class="key"><kbd>k</kbd></td><td>unsorted item</td><td>Keep global</td></tr>
+        <tr><td class="key"><kbd>u</kbd></td><td>keep-global</td><td>Unkeep</td></tr>
+        <tr><td class="key"><kbd>m</kbd></td><td>item not in a combo</td><td>Make a combo with Claude</td></tr>
+        <tr><td class="key"><kbd>x</kbd></td><td>item, once usage is read</td><td>Remove global</td></tr>
+        <tr><td class="key"><kbd>o</kbd></td><td>combo, or item a combo covers</td><td>Adopt</td></tr>
+        <tr><td class="key"><kbd>a</kbd></td><td>anywhere</td><td>Back to the local pane</td></tr>
+        <tr><td class="key"><kbd>h</kbd></td><td>anywhere</td><td>Hide the help box (its key sits in the box's top border), or bring it back with <code>h: Help</code> in the keys row. Each tab's help shows until you hide it, then stays hidden.</td></tr>
+        <tr><td class="key"><kbd>e</kbd></td><td>combo</td><td>Enable here</td></tr>
+        <tr><td class="key"><kbd>p</kbd></td><td>combo with stale projects</td><td>Prune stale</td></tr>
+        <tr><td class="key"><kbd>Tab</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>anywhere</td><td>Move the cursor one line</td></tr>
+        <tr><td class="key"><kbd>Enter</kbd></td><td>row or button</td><td>Open or close a global or combo, toggle a project, show kept globals, or press a button</td></tr>
+        <tr><td class="key"><kbd>Esc</kbd></td><td>anywhere</td><td>Back to the prompt</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="commands">
+    <div class="section-head">
+      <h2>Commands</h2>
+      <p>Everything the pane does is also a command, handy at narrow widths or when you know what you want.</p>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Command</th><th>Does</th></tr></thead>
+      <tbody>
+        <tr><td class="key"><code>/scope</code></td><td>Opens the pane (or brings it back with the keyboard).</td></tr>
+        <tr><td class="key"><code>/scope audit</code></td><td>Prints the overview as text: what is waiting on you, every global with its usage, every combo with where it's on, off or stale.</td></tr>
+        <tr><td class="key"><code>/scope triage</code></td><td>Same as the Triage key.</td></tr>
+        <tr><td class="key"><code>/scope adopt design</code></td><td>Adopt a combo by name.</td></tr>
+        <tr><td class="key"><code>/scope enable design</code></td><td>Turn a combo on in this session's project.</td></tr>
+        <tr><td class="key"><code>/scope off design</code></td><td>Turn a combo off in this session's project.</td></tr>
+        <tr><td class="key"><code>/scope backfill</code></td><td>Re-read usage from your transcripts.</td></tr>
+        <tr><td class="key"><code>cc-design</code></td><td>From a shell in a project folder: turn the combo on there. <code>cc-design-off</code> turns it off.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <footer>scopekeeper 0.2.0 · combos live in <code>~/.claude/scopekeeper/combos.json</code>, the shell functions in <code>~/.claude/scopekeeper/cc.sh</code>.</footer>
+</div>

@@ -1,0 +1,15 @@
+{
+  "name": "mushkyqt",
+  "owner": { "name": "Charles Melki" },
+  "metadata": {
+    "description": "Charles Melki's Claude Code plugins, skills and mods."
+  },
+  "plugins": [
+    {
+      "name": "scopekeeper",
+      "source": "./plugins/scopekeeper",
+      "description": "Audit global Claude Code installs against real usage, turn them into per-project cc-* combos, and keep your global setup lean.",
+      "category": "productivity"
+    }
+  ]
+}
