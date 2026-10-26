@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { DAY, ago, claimOf, classify, clip, coUse, kitUsage, day, family, generateScript, isStale, partLine, partUsage, q, rcLineFor, rcPlan, statusLine, suggest, validateKit } from '../hooks/core'
+import { DAY, ago, claimOf, classify, clip, coUse, kitUsage, day, family, generateScript, isStale, partLine, partUsage, q, rcLineFor, rcPlan, bandText, suggest, validateKit } from '../hooks/core'
 import type { ItemRow, KitProject, KitRow, Snapshot } from '../types'
 import type { Registry } from '../hooks/core'
 
@@ -163,7 +163,7 @@ test('unsorted globals group into bundles by name, co-use and shared projects', 
   expect(bundles.some(b => b.ids.includes('plugin:sorted'))).toBe(false)
 })
 
-test('the status line lights this project\'s kits, then names one step', async () => {
+test('the band lights this project\'s kits: on, partly on, or used here but off', async () => {
   const now = 100 * DAY
   const kit = (name: string, status: KitProject['status'], n: number, last: number, project = '/a') =>
     ({ name, summary: '', parts: [], globals: [], projects: [{ project, status, n, last, since: 0 }] })
@@ -173,17 +173,14 @@ test('the status line lights this project\'s kits, then names one step', async (
   })
   const bundle = { id: 'b', name: 'b', ids: [], why: '', projects: [], total: 0, direct: true }
 
-  expect(statusLine(snap([kit('remotion', 'on', 4, now - DAY), kit('vercel', 'on', 2, now - DAY)]), 30))
-    .toBe('● remotion  ● vercel')
-  expect(statusLine(snap([kit('remotion', 'off', 6, now - 3 * DAY), kit('vercel', 'on', 2, now - DAY)]), 30))
-    .toBe('○ remotion  ● vercel › turn on · /scope')
-  expect(statusLine(snap([kit('godot', 'on', 1, now - 34 * DAY)]), 30)).toBe('◌ godot › idle 34d · /scope')
-  expect(statusLine(snap([kit('godot', 'partial', 0, 0)]), 30)).toBe('◐ godot')
-  // Kits only used elsewhere stay out; with nothing here, the step stands alone.
-  expect(statusLine(snap([kit('godot', 'on', 1, now - DAY, '/b')]), 30)).toBe(undefined)
-  expect(statusLine(snap([], { bundles: [bundle, bundle] }), 30)).toBe('2 to make local · /scope')
-  expect(statusLine(snap([kit('vercel', 'on', 2, now - DAY)], { problems: ['cc-* functions are not loaded by ~/.zshrc'] }), 30))
-    .toBe('● vercel ! cc-* functions are not loaded by ~/.zsh… · /scope')
-  // Past four lights, the ones that need a look stay.
+  expect(bandText(snap([kit('remotion', 'on', 4, now - DAY), kit('vercel', 'on', 2, now - DAY)]))).toBe('● remotion  ● vercel')
+  expect(bandText(snap([kit('remotion', 'off', 6, now - 3 * DAY), kit('vercel', 'on', 2, now - DAY)]))).toBe('○ remotion  ● vercel')
+  expect(bandText(snap([kit('godot', 'partial', 0, 0)]))).toBe('◐ godot')
+  // No reminders: an idle kit is on, and problems and globals to make local stay in the pane.
+  expect(bandText(snap([kit('godot', 'on', 1, now - 34 * DAY)], { problems: ['cc-* functions are not loaded'], bundles: [bundle] }))).toBe('● godot')
+  // Kits only used elsewhere stay out; with none here, there is no band.
+  expect(bandText(snap([kit('godot', 'on', 1, now - DAY, '/b')], { bundles: [bundle] }))).toBe(undefined)
+  // Past four lights, the kits not fully on stay.
   const many = ['a', 'b', 'c', 'd', 'e'].map(n => kit(n, 'on', 1, now - DAY)).concat(kit('z', 'off', 1, now - DAY))
-  expect(statusLine(snap(many), 30)).toBe('● a  ● b  ● c  ○ z  +2 › turn on · /scope')})
+  expect(bandText(snap(many))).toBe('● a  ● b  ● c  ○ z  +2')
+})

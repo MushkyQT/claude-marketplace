@@ -5,7 +5,7 @@ import type { Bundle, KitProject, KitRow, GlobalItem, ItemRow, Snapshot, View } 
 import {
   EMPTY_REGISTRY, addUse, ago, claimOf, classify, clip, coUse, kitUsage, count, day, fit, generateScript,
   isStale, matchesAny, mcpServerOf, partLine, partSummary, plural, pluginName, rcCandidates, rcLineFor,
-  rcPlan, shortPath, statusLine, suggest, trimSessions, validateKit,
+  band, rcPlan, shortPath, suggest, trimSessions, validateKit,
 } from './core'
 import type { Kit, Ledger, Part, Registry, Sessions, UsageEvent } from './core'
 
@@ -458,7 +458,6 @@ function usedOffHere(c: KitRow, project: string): boolean {
 async function rescan($: $T, opts: Opts): Promise<Snapshot> {
   const snap = await scan($, opts.rc)
   await update($, snapshot, () => snap)
-  $.ui.status(statusLine(snap, opts.staleDays))
   return snap
 }
 
@@ -970,6 +969,36 @@ export const register: Register = (on, options) => {
       return result
     })
   }
+
+  // The band above the prompt speaks for this project: its kits as lights, on, partly on or off.
+  // Drawn here rather than with $.ui.status, which Claude Code shows as a yellow warning with our name before it.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const snap = await read($, snapshot)
+    const b = snap && !e.props.hasSurvey ? band(snap) : undefined
+    if (!b || !snap) return next(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const tone = { '●': 'green', '◐': 'yellow', '○': 'yellow' } as const
+    // A light toggles its kit in this project, after the same question as Enter in the pane.
+    // No hotkeys: a bare digit in an empty prompt would press them.
+    const toggle = (name: string) => () => {
+      const row = snap.kits.find(c => c.name === name)
+      if (!row) return
+      const isOn = statusIn(row, snap.cwdProject)?.status === 'on'
+      void act($, opts, `${isOn ? 'Turning off' : 'Turning on'} ${name}…`, () => toggleKit($, opts, row, snap.cwdProject, isOn, snap.home))
+    }
+    return (
+      <Box>
+        {b.lights.flatMap((l, i) => [
+          i ? <Text>{'  '}</Text> : null,
+          <Button key={`light:${l.name}`} plain onPress={toggle(l.name)}>
+            <Text color={tone[l.glyph]}>{l.glyph}</Text>
+            <Text> {l.name}</Text>
+          </Button>,
+        ])}
+        {b.more > 0 && <Text dimColor>  +{b.more}</Text>}
+      </Box>
+    )
+  })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const ui = $.ui.resolve(e)

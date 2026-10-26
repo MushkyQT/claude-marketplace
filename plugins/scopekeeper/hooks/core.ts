@@ -443,36 +443,27 @@ export const isStale = (p: { status: string; last: number; since: number }, now:
 
 const LIGHTS = 4
 
-/**
- * The status line: this project's kits as lights (● on, ◐ partly on, ○ used here but off, ◌ on but idle),
- * then the one thing waiting, if any. Undefined when there is nothing to show.
- * Plain text: Claude Code draws the line in its own color and does not render ANSI codes.
- */
-export function statusLine(snap: Snapshot, staleDays: number): string | undefined {
+export type Light = { glyph: '●' | '◐' | '○'; name: string }
+
+/** The band's parts: this project's kits as lights, and how many more there are. */
+export type Band = { lights: Light[]; more: number }
+
+/** This project's kits as lights: ● on, ◐ partly on, ○ used here but off. Undefined when none are. */
+export function band(snap: Snapshot): Band | undefined {
   const here = snap.kits.flatMap(c => {
     const pr = c.projects.find(p => p.project === snap.cwdProject)
-    return pr ? [{ name: c.name, pr, idle: isStale(pr, snap.scannedAt, staleDays) }] : []
+    return pr ? [{ name: c.name, glyph: (pr.status === 'on' ? '●' : pr.status === 'partial' ? '◐' : '○') as Light['glyph'] }] : []
   })
-  const glyph = (k: (typeof here)[number]) =>
-    k.pr.status === 'partial' ? '◐' : k.pr.status === 'off' ? '○' : k.idle ? '◌' : '●'
-  // Past the cap, the lights that need a look stay; the rest keep their alphabetical place.
-  const shown = new Set([...here.filter(k => glyph(k) !== '●'), ...here].slice(0, LIGHTS))
-  const lights = here.filter(k => shown.has(k)).map(k => `${glyph(k)} ${k.name}`)
-  if (here.length > LIGHTS) lights.push(`+${here.length - LIGHTS}`)
+  if (!here.length) return undefined
+  // Past the cap, the kits not fully on stay; the rest keep their alphabetical place.
+  const shown = new Set([...here.filter(k => k.glyph !== '●'), ...here].slice(0, LIGHTS))
+  return { lights: here.filter(k => shown.has(k)), more: Math.max(0, here.length - LIGHTS) }
+}
 
-  const off = here.filter(k => k.pr.status !== 'on' && k.pr.n > 0)
-  const idle = here.filter(k => k.idle)
-  const idleFor = (k: (typeof here)[number]) => ago(Math.max(k.pr.last, k.pr.since), snap.scannedAt)
-  const problem = snap.problems[0]
-  const step = problem ? clip(problem, 40)
-    : off.length ? `turn on${off.length > 1 ? ` ${off.length}` : ''}`
-    : idle.length === 1 ? `idle ${idleFor(idle[0]!)}`
-    : idle.length ? `${idle.length} idle`
-    : snap.bundles.length ? `${snap.bundles.length} to make local`
-    : ''
-  // Claude Code prefixes the line with the plugin's name, so it opens on the lights.
-  if (!lights.length) return step ? `${step} · /scope` : undefined
-  return step ? `${lights.join('  ')} ${problem ? '!' : '›'} ${step} · /scope` : lights.join('  ')
+/** The band as one line of text: `● vercel  ○ remotion`. */
+export function bandText(snap: Snapshot): string | undefined {
+  const b = band(snap)
+  return b && [...b.lights.map(l => `${l.glyph} ${l.name}`), ...(b.more ? [`+${b.more}`] : [])].join('  ')
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']

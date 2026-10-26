@@ -362,3 +362,62 @@ test('every help line, and the globals count under the lists, fits the pane at t
     await ui.unmount()
   }
 })
+
+// ---- the band above the prompt
+
+const BAND = {
+  plugin: 'scopekeeper',
+  component: 'AbovePrompt',
+  props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 80, scroll: { offset: 0, bodyRows: 19 }, view: {} },
+} as const
+
+test('the band lights this project\'s kits in color', async ($, on) => {
+  seed(on, SNAP)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect((await ui.find({ type: 'Text', text: '●' }))?.props.color).toBe('green')
+    expect((await ui.find({ type: 'Text', text: '○' }))?.props.color).toBe('yellow')
+    // Names keep the theme's own text color, and no reminder follows the lights.
+    expect((await ui.find({ type: 'Text', text: ' video' }))?.props.color).toBe(undefined)
+    expect(await ui.find({ type: 'Text', text: /turn on|\/scope/ })).toBe(undefined)
+    await ui.unmount()
+  }
+})
+
+test('a light in the band toggles its kit here, after one question', async ($, on) => {
+  seed(on, SNAP)
+  const asked: unknown[] = []
+  // $.ui.ask is an AskUserQuestion call: refused here, so the question is cancelled.
+  on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
+    asked.push(e)
+    return { deny: 'test' }
+  })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ key: 'light:design' }))?.props.hotkey).toBe(undefined)
+  await ui.press({ key: 'light:video' })
+  await ui.unmount()
+  expect(JSON.stringify(asked)).toContain('Enable video in ~/app?')
+})
+
+/** The engine's own band, beneath the mod: what shows when the mod passes. */
+const engineBand = (on: On) => on('ui.render', ($, e) => {
+  const { Text } = $.ui.resolve(e)
+  return <Text>engine</Text>
+})
+
+test('the band gives way to a survey', async ($, on) => {
+  seed(on, SNAP)
+  engineBand(on)
+  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, hasSurvey: true }, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: '●' })).toBe(undefined)
+  expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('before the first scan the band leaves its row to the engine', async ($, on) => {
+  seed(on, undefined)
+  engineBand(on)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text' }))?.text).toBe('engine')
+  await ui.unmount()
+})
