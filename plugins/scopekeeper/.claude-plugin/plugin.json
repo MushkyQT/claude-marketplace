@@ -1,6 +1,6 @@
 {
   "name": "scopekeeper",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Audit global Claude Code installs against real usage, turn them into per-project cc-* kits, and keep your global setup lean.",
   "author": { "name": "Charles Melki" },
   "license": "MIT",

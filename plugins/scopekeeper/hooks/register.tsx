@@ -5,7 +5,7 @@ import type { Bundle, KitProject, KitRow, GlobalItem, ItemRow, Snapshot, View } 
 import {
   EMPTY_REGISTRY, addUse, ago, claimOf, classify, clip, coUse, kitUsage, count, day, fit, generateScript,
   isStale, matchesAny, mcpServerOf, partLine, partSummary, plural, pluginName, rcCandidates, rcLineFor,
-  rcPlan, shortPath, suggest, trimSessions, validateKit,
+  rcPlan, shortPath, statusLine, suggest, trimSessions, validateKit,
 } from './core'
 import type { Kit, Ledger, Part, Registry, Sessions, UsageEvent } from './core'
 
@@ -435,7 +435,7 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
   }
 }
 
-/** What is waiting on the person: the header's to-do line and the status line. */
+/** What is waiting on the person: the header's to-do line. */
 function todo(snap: Snapshot, staleDays: number) {
   const projects = snap.kits.flatMap(c => c.projects)
   return {
@@ -455,16 +455,10 @@ function usedOffHere(c: KitRow, project: string): boolean {
   return pr !== undefined && pr.status !== 'on' && pr.n > 0
 }
 
-async function rescan($: $T, rcOption: string): Promise<Snapshot> {
-  const snap = await scan($, rcOption)
+async function rescan($: $T, opts: Opts): Promise<Snapshot> {
+  const snap = await scan($, opts.rc)
   await update($, snapshot, () => snap)
-  // The status line speaks for this project: kits used here but off, and what could be split out.
-  const offHere = snap.kits.filter(c => usedOffHere(c, snap.cwdProject)).map(c => c.name)
-  const parts = [
-    offHere.length ? `${offHere.join(', ')} off here` : '',
-    snap.bundles.length ? `${snap.bundles.length} to make local` : '',
-  ].filter(Boolean)
-  $.ui.status(parts.length ? `scope: ${parts.join(' · ')} · /scope` : undefined)
+  $.ui.status(statusLine(snap, opts.staleDays))
   return snap
 }
 
@@ -481,7 +475,7 @@ async function note($: $T, line: string): Promise<void> {
 }
 
 /** Runs one action at a time, with the pane showing what is going on. `quiet` skips the log and toast. */
-async function act($: $T, rcOption: string, label: string, work: () => Promise<string>, quiet = false): Promise<string> {
+async function act($: $T, opts: Opts, label: string, work: () => Promise<string>, quiet = false): Promise<string> {
   if (isRunning) {
     $.ui.toast('scope: another action is still running')
     return 'Another scopekeeper action is still running.'
@@ -502,7 +496,7 @@ async function act($: $T, rcOption: string, label: string, work: () => Promise<s
   } finally {
     await update($, busy, () => '')
     isRunning = false
-    await rescan($, rcOption).catch(() => undefined)
+    await rescan($, opts).catch(() => undefined)
   }
 }
 
@@ -550,7 +544,7 @@ async function enable($: $T, opts: Opts, name: string, project: string, off: boo
 /** Enable a kit everywhere it was used, then take its parts out of the global scope. `answer` skips the question. */
 async function adopt($: $T, opts: Opts, name: string, answer?: 'Adopt' | 'Only enable'): Promise<string> {
   const p = await paths($, opts.rc)
-  const snap = (await read($, snapshot)) ?? (await rescan($, opts.rc))
+  const snap = (await read($, snapshot)) ?? (await rescan($, opts))
   const row = snap.kits.find(c => c.name === name)
   if (!row) return `No kit named ${name}.`
   const targets = row.projects.filter(pr => pr.status !== 'on' && pr.n > 0).map(pr => pr.project)
@@ -703,7 +697,7 @@ async function makeLocal($: $T, opts: Opts, bundle: Bundle, items: ItemRow[]): P
     : { kind: 'mcp', name: m.name, config: global.mcpServers?.[m.name] ?? {} }))
   const saved = await saveKit($, opts, name, { parts })
   if (saved.startsWith('Not saved')) return saved
-  await rescan($, opts.rc)
+  await rescan($, opts)
   return adopt($, opts, name, answer === 'Make local' ? 'Adopt' : 'Only enable')
 }
 
@@ -889,10 +883,10 @@ export const register: Register = (on, options) => {
       sessionId = await $.session.id()
       await loadLedger($)
       await loadSessions($)
-      const snap = await rescan($, opts.rc)
+      const snap = await rescan($, opts)
       // No historySince or sessions: backfilled by a version that did not record them; reading again only adds.
       const hasSessions = (await $.store.get('sessions')) !== undefined
-      if (!snap.backfilledAt || !snap.historySince || !hasSessions) await backfill($, await paths($, opts.rc)).then(() => rescan($, opts.rc))
+      if (!snap.backfilledAt || !snap.historySince || !hasSessions) await backfill($, await paths($, opts.rc)).then(() => rescan($, opts))
     })().catch(() => undefined)
     return started
   })
@@ -916,7 +910,7 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: 'mcp__scopekeeper__inventory' }, async $ => {
-    const snap = await rescan($, opts.rc)
+    const snap = await rescan($, opts)
     const p = await paths($, opts.rc)
     const reg = await loadRegistry($, p)
     const items = snap.items.map(i => ({
@@ -934,14 +928,14 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'mcp__scopekeeper__save_kit' }, async ($, e) => {
     const input = e as unknown as { name?: string; description?: string; parts?: Part[] }
     const text = await saveKit($, opts, String(input.name ?? ''), { description: input.description, parts: input.parts ?? [] })
-    void rescan($, opts.rc)
+    void rescan($, opts)
     return { result: text }
   })
 
   on('tool.call', { tool: 'mcp__scopekeeper__keep_global' }, async ($, e) => {
     const input = e as unknown as { ids?: string[]; keep?: boolean }
     const text = await keepGlobal($, opts, input.ids ?? [], input.keep !== false)
-    void rescan($, opts.rc)
+    void rescan($, opts)
     return { result: text }
   })
 
@@ -952,16 +946,16 @@ export const register: Register = (on, options) => {
       void $.prompt.submit({ text: TRIAGE })
       return { text: 'Asking Claude to triage your global installs…' }
     }
-    if (verb === 'backfill') return { text: await act($, opts.rc, 'Backfilling usage…', () => backfill($, p)) }
+    if (verb === 'backfill') return { text: await act($, opts, 'Backfilling usage…', () => backfill($, p)) }
     if (verb === 'enable' || verb === 'off') {
       const project = sessionProject ?? e.args
-      return { text: await act($, opts.rc, `${verb === 'off' ? 'Removing' : 'Enabling'} ${arg}…`, () => enable($, opts, arg, project, verb === 'off')) }
+      return { text: await act($, opts, `${verb === 'off' ? 'Removing' : 'Enabling'} ${arg}…`, () => enable($, opts, arg, project, verb === 'off')) }
     }
-    if (verb === 'adopt') return { text: await act($, opts.rc, `Adopting ${arg}…`, () => adopt($, opts, arg)) }
-    if (verb === 'audit') return { text: auditText(await rescan($, opts.rc), p.home, opts.staleDays) }
+    if (verb === 'adopt') return { text: await act($, opts, `Adopting ${arg}…`, () => adopt($, opts, arg)) }
+    if (verb === 'audit') return { text: auditText(await rescan($, opts), p.home, opts.staleDays) }
     const isAdvanced = verb === 'advanced' || verb === 'all'
     const opened = await switchMode($, isAdvanced ? 'advanced' : 'local')
-    void rescan($, opts.rc)
+    void rescan($, opts)
     const what = isAdvanced ? 'Scope (all projects)' : 'Scope'
     return { text: opened.isPlaced ? `${what} pane opened.` : `${what} pane waiting for room (${opened.reason}). /scope audit prints it as text.` }
   })
@@ -992,7 +986,7 @@ export const register: Register = (on, options) => {
     const home = snap.home
     const here = snap.cwdProject
     const loading = !snap.backfilledAt
-    const run = (label: string, work: () => Promise<string>) => () => act($, opts.rc, label, work).then(() => undefined)
+    const run = (label: string, work: () => Promise<string>) => () => act($, opts, label, work).then(() => undefined)
     const nameOf = (id: string) => snap.items.find(i => i.id === id)?.name ?? id
     const kept = snap.items.filter(i => i.claim === 'keep').length
     // Kits used here but off come first: they are the ones waiting on a decision.
@@ -1128,7 +1122,7 @@ export const register: Register = (on, options) => {
         <Box flexDirection="row" columnGap={2} flexWrap="wrap">
           <Button key="advanced" hotkey="a" plain onPress={() => void switchMode($, 'advanced')}>Advanced</Button>
           <Button key="rescan" hotkey="r" plain dimColor={doing !== ''}
-            onPress={() => act($, opts.rc, 'Rescanning…', async () => '', true).then(() => undefined)}>Rescan</Button>
+            onPress={() => act($, opts, 'Rescanning…', async () => '', true).then(() => undefined)}>Rescan</Button>
           {unsorted > 0 && <Button key="triage" hotkey="t" plain onPress={() => void $.prompt.submit({ text: TRIAGE })}>Let Claude triage</Button>}
           {!showHelp && <Button key="help" hotkey="h" plain onPress={() => void toggleHelp($, 'local')}>Help</Button>}
           {enterHint !== '' && <Text>Enter: {enterHint}</Text>}
@@ -1183,7 +1177,7 @@ export const register: Register = (on, options) => {
     const home = snap?.home ?? ''
     const now = snap?.scannedAt ?? 0
     const run = (label: string, work: () => Promise<string>, quiet = false) => () =>
-      act($, opts.rc, label, work, quiet).then(() => undefined)
+      act($, opts, label, work, quiet).then(() => undefined)
 
     if (!snap) return <Text dimColor>Scanning your setup…</Text>
 

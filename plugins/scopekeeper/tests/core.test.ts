@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
-import { DAY, ago, claimOf, classify, clip, coUse, kitUsage, day, family, generateScript, isStale, partLine, partUsage, q, rcLineFor, rcPlan, suggest, validateKit } from '../hooks/core'
-import type { ItemRow } from '../types'
+import { DAY, ago, claimOf, classify, clip, coUse, kitUsage, day, family, generateScript, isStale, partLine, partUsage, q, rcLineFor, rcPlan, statusLine, suggest, validateKit } from '../hooks/core'
+import type { ItemRow, KitProject, KitRow, Snapshot } from '../types'
 import type { Registry } from '../hooks/core'
 
 const known = (keys: string[]) => (key: string) => keys.includes(key)
@@ -162,3 +162,28 @@ test('unsorted globals group into bundles by name, co-use and shared projects', 
   expect(bundles.find(b => b.ids.includes('skill:x-one'))?.why).toBe('used in the same 2 projects')
   expect(bundles.some(b => b.ids.includes('plugin:sorted'))).toBe(false)
 })
+
+test('the status line lights this project\'s kits, then names one step', async () => {
+  const now = 100 * DAY
+  const kit = (name: string, status: KitProject['status'], n: number, last: number, project = '/a') =>
+    ({ name, summary: '', parts: [], globals: [], projects: [{ project, status, n, last, since: 0 }] })
+  const snap = (kits: KitRow[], extra: Partial<Snapshot> = {}): Snapshot => ({
+    scannedAt: now, home: '/h', cwdProject: '/a', items: [], kits, bundles: [], everywhere: [], unused: [],
+    backfilledAt: 1, historySince: 1, historyProblem: '', rcLoaded: true, problems: [], ...extra,
+  })
+  const bundle = { id: 'b', name: 'b', ids: [], why: '', projects: [], total: 0, direct: true }
+
+  expect(statusLine(snap([kit('remotion', 'on', 4, now - DAY), kit('vercel', 'on', 2, now - DAY)]), 30))
+    .toBe('● remotion  ● vercel')
+  expect(statusLine(snap([kit('remotion', 'off', 6, now - 3 * DAY), kit('vercel', 'on', 2, now - DAY)]), 30))
+    .toBe('○ remotion  ● vercel › turn on · /scope')
+  expect(statusLine(snap([kit('godot', 'on', 1, now - 34 * DAY)]), 30)).toBe('◌ godot › idle 34d · /scope')
+  expect(statusLine(snap([kit('godot', 'partial', 0, 0)]), 30)).toBe('◐ godot')
+  // Kits only used elsewhere stay out; with nothing here, the step stands alone.
+  expect(statusLine(snap([kit('godot', 'on', 1, now - DAY, '/b')]), 30)).toBe(undefined)
+  expect(statusLine(snap([], { bundles: [bundle, bundle] }), 30)).toBe('2 to make local · /scope')
+  expect(statusLine(snap([kit('vercel', 'on', 2, now - DAY)], { problems: ['cc-* functions are not loaded by ~/.zshrc'] }), 30))
+    .toBe('● vercel ! cc-* functions are not loaded by ~/.zsh… · /scope')
+  // Past four lights, the ones that need a look stay.
+  const many = ['a', 'b', 'c', 'd', 'e'].map(n => kit(n, 'on', 1, now - DAY)).concat(kit('z', 'off', 1, now - DAY))
+  expect(statusLine(snap(many), 30)).toBe('● a  ● b  ● c  ○ z  +2 › turn on · /scope')})

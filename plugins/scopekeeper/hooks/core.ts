@@ -1,6 +1,6 @@
 // Pure logic: no `$`, so the tests can import it directly.
 
-import type { Bundle, ItemRow, ProjectUse } from '../types'
+import type { Bundle, ItemRow, ProjectUse, Snapshot } from '../types'
 
 export type Part =
   | { kind: 'plugin'; id: string }
@@ -440,6 +440,40 @@ export const DAY = 86_400_000
 /** On in a project and neither used nor (re)enabled there for `days`. */
 export const isStale = (p: { status: string; last: number; since: number }, now: number, days: number) =>
   p.status === 'on' && Math.max(p.last, p.since) > 0 && now - Math.max(p.last, p.since) > days * DAY
+
+const LIGHTS = 4
+
+/**
+ * The status line: this project's kits as lights (● on, ◐ partly on, ○ used here but off, ◌ on but idle),
+ * then the one thing waiting, if any. Undefined when there is nothing to show.
+ * Plain text: Claude Code draws the line in its own color and does not render ANSI codes.
+ */
+export function statusLine(snap: Snapshot, staleDays: number): string | undefined {
+  const here = snap.kits.flatMap(c => {
+    const pr = c.projects.find(p => p.project === snap.cwdProject)
+    return pr ? [{ name: c.name, pr, idle: isStale(pr, snap.scannedAt, staleDays) }] : []
+  })
+  const glyph = (k: (typeof here)[number]) =>
+    k.pr.status === 'partial' ? '◐' : k.pr.status === 'off' ? '○' : k.idle ? '◌' : '●'
+  // Past the cap, the lights that need a look stay; the rest keep their alphabetical place.
+  const shown = new Set([...here.filter(k => glyph(k) !== '●'), ...here].slice(0, LIGHTS))
+  const lights = here.filter(k => shown.has(k)).map(k => `${glyph(k)} ${k.name}`)
+  if (here.length > LIGHTS) lights.push(`+${here.length - LIGHTS}`)
+
+  const off = here.filter(k => k.pr.status !== 'on' && k.pr.n > 0)
+  const idle = here.filter(k => k.idle)
+  const idleFor = (k: (typeof here)[number]) => ago(Math.max(k.pr.last, k.pr.since), snap.scannedAt)
+  const problem = snap.problems[0]
+  const step = problem ? clip(problem, 40)
+    : off.length ? `turn on${off.length > 1 ? ` ${off.length}` : ''}`
+    : idle.length === 1 ? `idle ${idleFor(idle[0]!)}`
+    : idle.length ? `${idle.length} idle`
+    : snap.bundles.length ? `${snap.bundles.length} to make local`
+    : ''
+  // Claude Code prefixes the line with the plugin's name, so it opens on the lights.
+  if (!lights.length) return step ? `${step} · /scope` : undefined
+  return step ? `${lights.join('  ')} ${problem ? '!' : '›'} ${step} · /scope` : lights.join('  ')
+}
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
