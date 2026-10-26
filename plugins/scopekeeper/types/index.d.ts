@@ -8,7 +8,7 @@ export type GlobalItem = {
   name: string
   /** `name@marketplace` for a plugin; the path for a skill or agent. */
   ref: string
-  /** `keep`, `combo:<name>`, or `new` (not classified yet). */
+  /** `keep`, `kit:<name>`, or `new` (not classified yet). */
   claim: string
 }
 
@@ -16,7 +16,7 @@ export type ProjectUse = { project: string; n: number; last: number }
 
 export type ItemRow = GlobalItem & { total: number; last: number; uses: ProjectUse[] }
 
-export type ComboProject = {
+export type KitProject = {
   project: string
   status: 'on' | 'partial' | 'off'
   n: number
@@ -25,21 +25,21 @@ export type ComboProject = {
   since: number
 }
 
-export type ComboRow = {
+export type KitRow = {
   name: string
   summary: string
   /** One line per part: what cc-<name> installs or runs. */
   parts: string[]
-  /** Global items this combo covers that are still installed globally. */
+  /** Global items this kit covers that are still installed globally. */
   globals: string[]
-  projects: ComboProject[]
+  projects: KitProject[]
 }
 
-/** Unsorted globals that belong together, offered as one combo to make local. */
+/** Unsorted globals that belong together, offered as one kit to make local. */
 export type Bundle = {
   /** The sorted member ids, joined: stable while the members are. */
   id: string
-  /** The combo name it would be saved under. */
+  /** The kit name it would be saved under. */
   name: string
   ids: string[]
   /** Why these go together, in a few words. */
@@ -56,7 +56,7 @@ export type Snapshot = {
   home: string
   cwdProject: string
   items: ItemRow[]
-  combos: ComboRow[]
+  kits: KitRow[]
   /** Suggested from the unsorted globals: bundles to make local. */
   bundles: Bundle[]
   /** Unsorted globals used in most projects: worth keeping global. */
@@ -72,7 +72,7 @@ export type Snapshot = {
   problems: string[]
 }
 
-export type View = { tab: 'globals' | 'combos'; selected: string; showKept: boolean }
+export type View = { tab: 'globals' | 'kits'; selected: string; showKept: boolean }
 
 declare module 'claude-code' {
   interface PluginState {

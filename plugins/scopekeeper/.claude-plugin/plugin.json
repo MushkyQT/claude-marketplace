@@ -1,7 +1,7 @@
 {
   "name": "scopekeeper",
-  "version": "0.4.0",
-  "description": "Audit global Claude Code installs against real usage, turn them into per-project cc-* combos, and keep your global setup lean.",
+  "version": "0.5.0",
+  "description": "Audit global Claude Code installs against real usage, turn them into per-project cc-* kits, and keep your global setup lean.",
   "author": { "name": "Charles Melki" },
   "license": "MIT",
   "types": "./types/index.d.ts",
@@ -9,7 +9,7 @@
     "staleDays": {
       "type": "number",
       "title": "Stale after (days)",
-      "description": "A combo enabled in a project and unused for this many days (since its last use, or since it was enabled) is flagged stale, and Prune offers to remove it.",
+      "description": "A kit enabled in a project and unused for this many days (since its last use, or since it was enabled) is flagged stale, and Prune offers to remove it.",
       "default": 30
     },
     "shellRc": {

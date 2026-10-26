@@ -8,7 +8,7 @@
     {
       "name": "scopekeeper",
       "source": "./plugins/scopekeeper",
-      "description": "Audit global Claude Code installs against real usage, turn them into per-project cc-* combos, and keep your global setup lean.",
+      "description": "Audit global Claude Code installs against real usage, turn them into per-project cc-* kits, and keep your global setup lean.",
       "category": "productivity"
     }
   ]

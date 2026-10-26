@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { DAY, ago, claimOf, classify, clip, coUse, comboUsage, day, family, generateScript, isStale, partLine, partUsage, q, rcLineFor, rcPlan, suggest, validateCombo } from '../hooks/core'
+import { DAY, ago, claimOf, classify, clip, coUse, kitUsage, day, family, generateScript, isStale, partLine, partUsage, q, rcLineFor, rcPlan, suggest, validateKit } from '../hooks/core'
 import type { ItemRow } from '../types'
 import type { Registry } from '../hooks/core'
 
@@ -24,7 +24,7 @@ test('uses map to the install they came from', async () => {
 const REGISTRY: Registry = {
   version: 1,
   keepGlobal: ['plugin:token-kingdom'],
-  combos: {
+  kits: {
     design: {
       parts: [
         { kind: 'installer', run: 'npx -y impeccable@latest install --project -y', paths: ['.claude/skills/impeccable/', '.claude/agents/impeccable-*'] },
@@ -36,17 +36,17 @@ const REGISTRY: Registry = {
   },
 }
 
-test('a combo claims the globals it covers', async () => {
-  expect(partUsage(REGISTRY.combos.design!.parts[0]!)).toEqual(['skill:impeccable', 'agent:impeccable-*'])
-  expect(comboUsage(REGISTRY.combos.remotion!)).toEqual(['skill:remotion-*'])
-  expect(claimOf('agent:impeccable-finish-reviewer', REGISTRY)).toBe('combo:design')
-  expect(claimOf('skill:remotion-captions', REGISTRY)).toBe('combo:remotion')
-  expect(claimOf('plugin:genjutsu', REGISTRY)).toBe('combo:design')
+test('a kit claims the globals it covers', async () => {
+  expect(partUsage(REGISTRY.kits.design!.parts[0]!)).toEqual(['skill:impeccable', 'agent:impeccable-*'])
+  expect(kitUsage(REGISTRY.kits.remotion!)).toEqual(['skill:remotion-*'])
+  expect(claimOf('agent:impeccable-finish-reviewer', REGISTRY)).toBe('kit:design')
+  expect(claimOf('skill:remotion-captions', REGISTRY)).toBe('kit:remotion')
+  expect(claimOf('plugin:genjutsu', REGISTRY)).toBe('kit:design')
   expect(claimOf('plugin:token-kingdom', REGISTRY)).toBe('keep')
   expect(claimOf('skill:improve', REGISTRY)).toBe('new')
 })
 
-test('the generated script has an on and an off function per combo', async () => {
+test('the generated script has an on and an off function per kit', async () => {
   const script = generateScript(REGISTRY, '/home/x/.claude/skill-library')
   for (const name of ['design', 'remotion', 'godot']) {
     expect(script.includes(`cc-${name}() {`)).toBe(true)
@@ -59,11 +59,11 @@ test('the generated script has an on and an off function per combo', async () =>
   expect(q("it's")).toBe(`'it'\\''s'`)
 })
 
-test('combos that would write outside the project are refused', async () => {
-  expect(validateCombo('Design', { parts: [{ kind: 'plugin', id: 'genjutsu@genjutsu' }] }).length).toBe(1)
-  expect(validateCombo('x', { parts: [{ kind: 'installer', run: 'true', paths: ['../oops'] }] }).length).toBe(1)
-  expect(validateCombo('x', { parts: [{ kind: 'plugin', id: 'genjutsu' }] }).length).toBe(1)
-  expect(validateCombo('design', REGISTRY.combos.design!)).toEqual([])
+test('kits that would write outside the project are refused', async () => {
+  expect(validateKit('Design', { parts: [{ kind: 'plugin', id: 'genjutsu@genjutsu' }] }).length).toBe(1)
+  expect(validateKit('x', { parts: [{ kind: 'installer', run: 'true', paths: ['../oops'] }] }).length).toBe(1)
+  expect(validateKit('x', { parts: [{ kind: 'plugin', id: 'genjutsu' }] }).length).toBe(1)
+  expect(validateKit('design', REGISTRY.kits.design!)).toEqual([])
 })
 
 test('the shell decides which startup files load cc.sh', async () => {
@@ -92,12 +92,12 @@ test('the line in a bash file only runs under bash', async () => {
 })
 
 test('each part says what it installs or runs', async () => {
-  expect(REGISTRY.combos.design!.parts.map(partLine)).toEqual([
+  expect(REGISTRY.kits.design!.parts.map(partLine)).toEqual([
     'runs: npx -y impeccable@latest install --project -y',
     'plugin genjutsu@genjutsu',
   ])
-  expect(partLine(REGISTRY.combos.godot!.parts[0]!)).toBe("mcp godot-ai: uvx it's")
-  expect(partLine(REGISTRY.combos.remotion!.parts[0]!)).toBe('skills remotion-* from https://github.com/remotion-dev/skills.git')
+  expect(partLine(REGISTRY.kits.godot!.parts[0]!)).toBe("mcp godot-ai: uvx it's")
+  expect(partLine(REGISTRY.kits.remotion!.parts[0]!)).toBe('skills remotion-* from https://github.com/remotion-dev/skills.git')
 })
 
 test('stale counts from the later of last use and enabling', async () => {
@@ -112,7 +112,7 @@ test('stale counts from the later of last use and enabling', async () => {
 test('display helpers', async () => {
   expect(ago(0, 1)).toBe('—')
   expect(clip('status', 12)).toBe('status')
-  expect(clip('a-long-combo-name', 8)).toBe('a-long-…')
+  expect(clip('a-long-kit-name', 8)).toBe('a-long-…')
   const now = Date.UTC(2026, 9, 26, 12)
   expect(day(Date.UTC(2026, 8, 26, 12), now)).toBe('Sep 26')
   expect(day(Date.UTC(2025, 8, 26, 12), now)).toBe('Sep 26 2025')

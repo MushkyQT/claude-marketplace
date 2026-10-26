@@ -19,7 +19,7 @@ From a shell: `claude plugin marketplace add MushkyQT/claude-marketplace`, then 
 
 | Plugin | What it does |
 |---|---|
-| [scopekeeper](plugins/scopekeeper) | Shows every global plugin, skill, agent and MCP server next to how much you use it and where, turns the project-specific ones into `cc-*` combos, and removes the globals once the projects have them. `/scope` opens its pane. |
+| [scopekeeper](plugins/scopekeeper) | Shows every global plugin, skill, agent and MCP server next to how much you use it and where, turns the project-specific ones into `cc-*` kits, and removes the globals once the projects have them. `/scope` opens its pane. |
 
 ## Adding a plugin
 

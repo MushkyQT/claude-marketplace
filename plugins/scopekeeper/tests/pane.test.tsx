@@ -17,10 +17,10 @@ const SNAP: Snapshot = {
   problems: [],
   items: [
     { id: 'skill:improve', kind: 'skill', name: 'improve', ref: '/c/skills/improve', claim: 'new', total: 17, last: NOW - DAY, uses: [{ project: '/w/app', n: 17, last: NOW - DAY }] },
-    { id: 'mcp:blender', kind: 'mcp', name: 'blender', ref: 'blender', claim: 'combo:blender', total: 546, last: NOW - 10 * DAY, uses: [{ project: '/w/game', n: 546, last: NOW - 10 * DAY }] },
+    { id: 'mcp:blender', kind: 'mcp', name: 'blender', ref: 'blender', claim: 'kit:blender', total: 546, last: NOW - 10 * DAY, uses: [{ project: '/w/game', n: 546, last: NOW - 10 * DAY }] },
     { id: 'plugin:token-kingdom', kind: 'plugin', name: 'token-kingdom', ref: 'token-kingdom@token-kingdom', claim: 'keep', total: 2, last: 0, uses: [] },
   ],
-  combos: [
+  kits: [
     { name: 'blender', summary: 'Blender MCP + blender-kiln', parts: ['mcp blender: uvx mcp-for-blender', 'plugin blender-kiln@blender-kiln'], globals: ['mcp:blender'], projects: [
       { project: '/w/game', status: 'partial', n: 546, last: NOW - 10 * DAY, since: 0 },
     ] },
@@ -62,8 +62,8 @@ const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 /** Serves the pane's state from a map the test seeds, and records what the mod writes. */
 function seed(on: On, snap: Snapshot | undefined, view?: View) {
   const state: Record<string, unknown> = {
-    snapshot: snap && { shape: 'snap-3', value: snap },
-    view: view && { shape: 'view-2', value: view },
+    snapshot: snap && { shape: 'snap-4', value: snap },
+    view: view && { shape: 'view-3', value: view },
   }
   let version = 1
   on('state.get', (_, e) => ({ value: { value: state[e.key], version } }))
@@ -80,7 +80,7 @@ function seed(on: On, snap: Snapshot | undefined, view?: View) {
 const rowTexts = async (ui: { findAll: (q: { type: string }) => Promise<{ key: string | undefined; text: string }[]> }, prefix: RegExp) =>
   (await ui.findAll({ type: 'Button' })).filter(b => prefix.test(b.key ?? '')).map(b => b.text)
 
-// ---- the advanced pane: every global and every combo, across projects
+// ---- the advanced pane: every global and every kit, across projects
 
 test('the globals tab lists unsorted installs first, on every surface', async ($, on) => {
   seed(on, SNAP)
@@ -105,7 +105,7 @@ test('before the first scan the pane says so', async ($, on) => {
 test('every action is a plain Button, so the terminal draws its hotkey', async ($, on) => {
   seed(on, SNAP, { tab: 'globals', selected: 'skill:improve', showKept: false })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  for (const [key, hotkey] of [['tab-globals', 'g'], ['tab-combos', 'c'], ['rescan', 'r'], ['act-make', 'm'], ['act-keep', 'k'], ['act-remove', 'x']]) {
+  for (const [key, hotkey] of [['tab-globals', 'g'], ['tab-kits', 'i'], ['rescan', 'r'], ['act-make', 'm'], ['act-keep', 'k'], ['act-remove', 'x']]) {
     const button = await ui.find({ key: key! })
     expect(button?.props.plain, key).toBe(true)
     expect(button?.props.hotkey, key).toBe(hotkey)
@@ -118,12 +118,12 @@ test('nothing starts open; an open row shows its details right under it', async 
   const closed = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await closed.find({ key: 'detail:skill:improve' })).toBe(undefined)
   await closed.unmount()
-  state.view = { shape: 'view-2', value: { tab: 'globals', selected: 'skill:improve', showKept: false } }
+  state.view = { shape: 'view-3', value: { tab: 'globals', selected: 'skill:improve', showKept: false } }
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ key: 'detail:skill:improve' })).toBeDefined()
   // Its actions are buttons in its details, not a line of keys to read.
-  expect((await ui.find({ key: 'act-make' }))?.text).toBe('Make a combo')
-  expect(await ui.find({ type: 'Text', text: /^m make a combo/ })).toBe(undefined)
+  expect((await ui.find({ key: 'act-make' }))?.text).toBe('Make a kit')
+  expect(await ui.find({ type: 'Text', text: /^m make a kit/ })).toBe(undefined)
   // The kept install is folded away until asked for.
   expect(await ui.find({ key: 'item:plugin:token-kingdom' })).toBe(undefined)
   expect((await ui.find({ key: 'kept' }))?.text).toBe('▸ Kept global (1)')
@@ -140,7 +140,7 @@ test('moving the ring opens nothing; Enter opens the row', async ($, on) => {
   await first.unmount()
   expect((state.view as { value: View }).value.selected).toBe('mcp:blender')
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ type: 'Text', text: /Covered by combo blender, but still installed globally/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Covered by kit blender, but still installed globally/ })).toBeDefined()
   expect((await ui.find({ key: 'act-adopt' }))?.text).toBe('Adopt blender')
   // a goes back to the local pane, so Adopt takes o.
   expect((await ui.find({ key: 'act-adopt' }))?.props.hotkey).toBe('o')
@@ -153,10 +153,10 @@ test('moving the ring opens nothing; Enter opens the row', async ($, on) => {
 test('no row is wider than the pane', async ($, on) => {
   const state = seed(on, SNAP)
   for (const width of [40, 62, 120]) {
-    for (const tab of ['globals', 'combos'] as const) {
-      state.view = { shape: 'view-2', value: { tab, selected: tab === 'combos' ? 'design' : '', showKept: true } }
+    for (const tab of ['globals', 'kits'] as const) {
+      state.view = { shape: 'view-3', value: { tab, selected: tab === 'kits' ? 'design' : '', showKept: true } }
       const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: width }, surface: 'terminal' })
-      const rows = await rowTexts(ui, /^(item|combo|proj):/)
+      const rows = await rowTexts(ui, /^(item|kit|proj):/)
       expect(rows.length > 0).toBe(true)
       for (const row of rows) expect(row.length <= width, `${width} ${tab}: "${row}"`).toBe(true)
       await ui.unmount()
@@ -164,13 +164,13 @@ test('no row is wider than the pane', async ($, on) => {
   }
 })
 
-test('a combo just enabled is on, one unused for staleDays is stale', async ($, on) => {
-  seed(on, SNAP, { tab: 'combos', selected: 'design', showKept: false })
+test('a kit just enabled is on, one unused for staleDays is stale', async ($, on) => {
+  seed(on, SNAP, { tab: 'kits', selected: 'design', showKept: false })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   // ✓ already says on: the last cell only speaks for what needs a look.
   expect((await ui.find({ key: 'proj:design:/w/new' }))?.text.trimEnd().endsWith(' on')).toBe(false)
   expect((await ui.find({ key: 'proj:design:/w/site' }))?.text.endsWith('used, off')).toBe(true)
-  expect((await ui.find({ key: 'combo:design' }))?.text.trimEnd().endsWith('turn on 1')).toBe(true)
+  expect((await ui.find({ key: 'kit:design' }))?.text.trimEnd().endsWith('turn on 1')).toBe(true)
   expect((await ui.find({ key: 'proj:design:/w/old' }))?.text.endsWith('stale')).toBe(true)
   expect((await ui.find({ key: 'act-prune' }))?.text).toBe('Prune 1 stale')
   // What cc-design runs is shown before anyone enables it.
@@ -191,7 +191,7 @@ test('while history loads, counts are not shown as zero and nothing can be remov
 
 const DAILY = { ...PANE, requestId: 'scopekeeper' } as const
 
-test('the daily pane shows whether each setup is on in this project', async ($, on) => {
+test('the daily pane shows whether each kit is on in this project', async ($, on) => {
   seed(on, SNAP)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...DAILY, surface })
@@ -208,14 +208,14 @@ test('the daily pane shows whether each setup is on in this project', async ($, 
   }
 })
 
-test('a setup used here but off comes first, with one key to turn it on', async ($, on) => {
+test('a kit used here but off comes first, with one key to turn it on', async ($, on) => {
   seed(on, SNAP)
   const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })
   expect((await rowTexts(ui, /^here:/))[0]!.includes('video')).toBe(true)
   expect(await ui.find({ key: 'detail:here:video' })).toBe(undefined)
   const button = await ui.find({ key: 'turn-on-used' })
   expect(button?.props.hotkey).toBe('y')
-  // It belongs to the list, not the row under the cursor, so it names every setup it turns on.
+  // It belongs to the list, not the row under the cursor, so it names every kit it turns on.
   expect(button?.text).toBe('Turn on what you used here: video')
   // The footer names what Enter does on the selected row.
   expect(await ui.find({ type: 'Text', text: 'Enter: Turn on' })).toBeDefined()
@@ -329,9 +329,9 @@ test('each view explains itself until h hides it, and hidden stays hidden', asyn
   for (const [mount, view, text] of [
     [DAILY, 'local', /^Load tools only/],
     [PANE, 'globals', /^  new: unsorted/],
-    [{ ...PANE, requestId: 'scopekeeper-advanced' }, 'combos', /^A combo is a group of tools/],
+    [{ ...PANE, requestId: 'scopekeeper-advanced' }, 'kits', /^A kit is a group of tools/],
   ] as const) {
-    if (view === 'combos') state.view = { shape: 'view-2', value: { tab: 'combos', selected: '', showKept: false } }
+    if (view === 'kits') state.view = { shape: 'view-3', value: { tab: 'kits', selected: '', showKept: false } }
     const ui = await $.ui.mount({ ...mount, surface: 'terminal' })
     expect(await ui.find({ type: 'Text', text }), view).toBeDefined()
     const help = await ui.find({ key: 'help' })
@@ -345,13 +345,13 @@ test('each view explains itself until h hides it, and hidden stays hidden', asyn
     expect((await again.find({ key: 'help' }))?.text).toBe('Help')
     await again.unmount()
   }
-  expect(stored.helpHidden).toEqual(['local', 'globals', 'combos'])
+  expect(stored.helpHidden).toEqual(['local', 'globals', 'kits'])
 })
 
 test('every help line, and the globals count under the lists, fits the pane at the width it opens at', async ($, on) => {
   const state = seed(on, SNAP)
-  for (const [mount, tab, width] of [[DAILY, 'globals', 56], [PANE, 'globals', 64], [PANE, 'combos', 64]] as const) {
-    state.view = { shape: 'view-2', value: { tab, selected: '', showKept: false } }
+  for (const [mount, tab, width] of [[DAILY, 'globals', 56], [PANE, 'globals', 64], [PANE, 'kits', 64]] as const) {
+    state.view = { shape: 'view-3', value: { tab, selected: '', showKept: false } }
     const ui = await $.ui.mount({ ...mount, props: { ...mount.props, bodyColumns: width }, surface: 'terminal' })
     // The box's border and padding take 4 columns.
     const help = (await ui.findAll({ type: 'Box' })).filter(b => /^help:/.test(b.key ?? ''))

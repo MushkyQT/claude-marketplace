@@ -1,22 +1,22 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Bundle, ComboProject, ComboRow, GlobalItem, ItemRow, Snapshot, View } from '../types'
+import type { Bundle, KitProject, KitRow, GlobalItem, ItemRow, Snapshot, View } from '../types'
 import {
-  EMPTY_REGISTRY, addUse, ago, claimOf, classify, clip, coUse, comboUsage, count, day, fit, generateScript,
+  EMPTY_REGISTRY, addUse, ago, claimOf, classify, clip, coUse, kitUsage, count, day, fit, generateScript,
   isStale, matchesAny, mcpServerOf, partLine, partSummary, plural, pluginName, rcCandidates, rcLineFor,
-  rcPlan, shortPath, suggest, trimSessions, validateCombo,
+  rcPlan, shortPath, suggest, trimSessions, validateKit,
 } from './core'
-import type { Combo, Ledger, Part, Registry, Sessions, UsageEvent } from './core'
+import type { Kit, Ledger, Part, Registry, Sessions, UsageEvent } from './core'
 
 type $T = EngineInterface
 
-/** The daily pane: this project's setups, and what to split out of the global scope. */
+/** The daily pane: this project's kits, and what to split out of the global scope. */
 const PANE = 'scopekeeper'
-/** Every global install and every combo, across all projects. */
+/** Every global install and every kit, across all projects. */
 const ADVANCED = 'scopekeeper-advanced'
-const snapshot = atom({ plugin: 'scopekeeper', key: 'snapshot' } as const, null, { shape: 'snap-3' })
-const view = atom({ plugin: 'scopekeeper', key: 'view' } as const, { tab: 'globals', selected: '', showKept: false }, { shape: 'view-2' })
+const snapshot = atom({ plugin: 'scopekeeper', key: 'snapshot' } as const, null, { shape: 'snap-4' })
+const view = atom({ plugin: 'scopekeeper', key: 'view' } as const, { tab: 'globals', selected: '', showKept: false }, { shape: 'view-3' })
 const pick = atom({ plugin: 'scopekeeper', key: 'pick' } as const, '')
 const opened = atom({ plugin: 'scopekeeper', key: 'opened' } as const, '')
 const helpHidden = atom({ plugin: 'scopekeeper', key: 'helpHidden' } as const, [])
@@ -33,6 +33,8 @@ type Paths = {
   globalJson: string
   dir: string
   registry: string
+  /** Where kits were saved before they were called kits: read once, then moved to backups. */
+  legacyRegistry: string
   script: string
   libRoot: string
   /** The startup files that must load cc.sh (see rcPlan). */
@@ -58,7 +60,8 @@ async function paths($: $T, rcOption: string): Promise<Paths> {
     cfg,
     globalJson: custom ? `${cfg}/.claude.json` : `${home}/.claude.json`,
     dir,
-    registry: `${dir}/combos.json`,
+    registry: `${dir}/kits.json`,
+    legacyRegistry: `${dir}/combos.json`,
     script: `${dir}/cc.sh`,
     libRoot: `${cfg}/skill-library`,
     rcFiles: rc.files,
@@ -78,8 +81,19 @@ async function readJson<T>($: $T, path: string, fallback: T): Promise<T> {
 // ---------------------------------------------------------------- registry
 
 async function loadRegistry($: $T, p: Paths): Promise<Registry> {
+  if (!(await $.fs.exists(p.registry)) && (await $.fs.exists(p.legacyRegistry))) return migrateRegistry($, p)
   const reg = await readJson<Registry>($, p.registry, EMPTY_REGISTRY)
-  return { version: 1, keepGlobal: reg.keepGlobal ?? [], combos: reg.combos ?? {} }
+  return { version: 1, keepGlobal: reg.keepGlobal ?? [], kits: reg.kits ?? {} }
+}
+
+/** combos.json, from before kits had their name: saved again as kits.json, the old file kept in backups. */
+async function migrateRegistry($: $T, p: Paths): Promise<Registry> {
+  const old = await readJson<{ keepGlobal?: string[]; combos?: Registry['kits'] }>($, p.legacyRegistry, {})
+  const reg: Registry = { version: 1, keepGlobal: old.keepGlobal ?? [], kits: old.combos ?? {} }
+  await saveRegistry($, p, reg)
+  await $.process.run(['mkdir', '-p', `${p.dir}/backups`])
+  await $.process.run(['mv', p.legacyRegistry, `${p.dir}/backups/combos.json`]).catch(() => undefined)
+  return reg
 }
 
 async function saveRegistry($: $T, p: Paths, reg: Registry): Promise<void> {
@@ -230,18 +244,18 @@ async function backfill($: $T, p: Paths): Promise<string> {
   return `Backfilled ${events.length} usage records from your transcripts.`
 }
 
-/** combo + project -> when it was enabled there (by the pane, or first seen on unused). */
+/** kit + project -> when it was enabled there (by the pane, or first seen on unused). */
 type OnSince = Record<string, number>
-const onKey = (combo: string, project: string) => `${combo}\n${project}`
+const onKey = (kit: string, project: string) => `${kit}\n${project}`
 
 async function loadOnSince($: $T): Promise<OnSince> {
   return { ...(((await $.store.get('onSince')) as OnSince | undefined) ?? {}) }
 }
 
-async function markOn($: $T, combo: string, project: string, on: boolean): Promise<void> {
+async function markOn($: $T, kit: string, project: string, on: boolean): Promise<void> {
   const map = await loadOnSince($)
-  if (on) map[onKey(combo, project)] = await $.clock.now()
-  else delete map[onKey(combo, project)]
+  if (on) map[onKey(kit, project)] = await $.clock.now()
+  else delete map[onKey(kit, project)]
   await $.store.set('onSince', map)
 }
 
@@ -279,8 +293,8 @@ async function inventory($: $T, p: Paths, reg: Registry) {
   for (const name of Object.keys(global.mcpServers ?? {})) add({ id: `mcp:${name}`, kind: 'mcp', name, ref: name })
 
   knownPlugins = [...new Set([...Object.keys(installed).map(pluginName),
-    ...Object.values(reg.combos).flatMap(c => c.parts.flatMap(x => (x.kind === 'plugin' ? [pluginName(x.id)] : [])))])]
-  knownKeys = [...items.map(i => i.id), ...Object.values(reg.combos).flatMap(comboUsage)]
+    ...Object.values(reg.kits).flatMap(c => c.parts.flatMap(x => (x.kind === 'plugin' ? [pluginName(x.id)] : [])))])]
+  knownKeys = [...items.map(i => i.id), ...Object.values(reg.kits).flatMap(kitUsage)]
   return { items, installed, global }
 }
 
@@ -357,12 +371,12 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
 
   const onSince = await loadOnSince($)
   let onSinceChanged = false
-  const combos: ComboRow[] = []
-  for (const [name, combo] of Object.entries(reg.combos)) {
-    const used = usesOf(comboUsage(combo))
-    const projects: ComboProject[] = []
+  const kits: KitRow[] = []
+  for (const [name, kit] of Object.entries(reg.kits)) {
+    const used = usesOf(kitUsage(kit))
+    const projects: KitProject[] = []
     for (const project of [...ok]) {
-      const states = await Promise.all(combo.parts.map(part => partOn($, part, project, installed, global)))
+      const states = await Promise.all(kit.parts.map(part => partOn($, part, project, installed, global)))
       const on = states.filter(Boolean).length
       const use = used.get(project)
       const key = onKey(name, project)
@@ -385,20 +399,20 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
       })
     }
     projects.sort((a, b) => b.last - a.last)
-    combos.push({
+    kits.push({
       name,
-      summary: combo.description ?? combo.parts.map(partSummary).join(' + '),
-      parts: combo.parts.map(partLine),
-      globals: rows.filter(r => r.claim === `combo:${name}`).map(r => r.id),
+      summary: kit.description ?? kit.parts.map(partSummary).join(' + '),
+      parts: kit.parts.map(partLine),
+      globals: rows.filter(r => r.claim === `kit:${name}`).map(r => r.id),
       projects,
     })
   }
   if (onSinceChanged) await $.store.set('onSince', onSince)
 
-  if (!(await $.fs.exists(p.script)) && Object.keys(reg.combos).length) await saveRegistry($, p, reg)
+  if (!(await $.fs.exists(p.script)) && Object.keys(reg.kits).length) await saveRegistry($, p, reg)
   const missing = await rcMissing($, p)
   const isRc = missing.length === 0
-  if (Object.keys(reg.combos).length) {
+  if (Object.keys(reg.kits).length) {
     if (!isRc) problems.push(`cc-* functions are not loaded by ${listFiles(missing, p.home)}`)
     if (p.rcNote) problems.push(p.rcNote)
   }
@@ -411,7 +425,7 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
     home: p.home,
     cwdProject,
     items: rows,
-    combos: combos.sort((a, b) => a.name.localeCompare(b.name)),
+    kits: kits.sort((a, b) => a.name.localeCompare(b.name)),
     ...suggest(rows, coUse(await loadSessions($)), cwdProject),
     backfilledAt: Number((await $.store.get('backfilledAt')) ?? 0),
     historySince: Number((await $.store.get('historySince')) ?? 0),
@@ -423,20 +437,20 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
 
 /** What is waiting on the person: the header's to-do line and the status line. */
 function todo(snap: Snapshot, staleDays: number) {
-  const projects = snap.combos.flatMap(c => c.projects)
+  const projects = snap.kits.flatMap(c => c.projects)
   return {
     unsorted: snap.items.filter(i => i.claim === 'new').length,
-    toAdopt: snap.items.filter(i => i.claim.startsWith('combo:')).length,
+    toAdopt: snap.items.filter(i => i.claim.startsWith('kit:')).length,
     usedOff: projects.filter(pr => pr.status !== 'on' && pr.n > 0).length,
     stale: projects.filter(pr => isStale(pr, snap.scannedAt, staleDays)).length,
   }
 }
 
-/** A combo's state in one project, `off` where it was neither on nor used. */
-const statusIn = (c: ComboRow, project: string) => c.projects.find(pr => pr.project === project)
+/** A kit's state in one project, `off` where it was neither on nor used. */
+const statusIn = (c: KitRow, project: string) => c.projects.find(pr => pr.project === project)
 
 /** Used in this project but off there: the first thing worth turning on. */
-function usedOffHere(c: ComboRow, project: string): boolean {
+function usedOffHere(c: KitRow, project: string): boolean {
   const pr = statusIn(c, project)
   return pr !== undefined && pr.status !== 'on' && pr.n > 0
 }
@@ -444,8 +458,8 @@ function usedOffHere(c: ComboRow, project: string): boolean {
 async function rescan($: $T, rcOption: string): Promise<Snapshot> {
   const snap = await scan($, rcOption)
   await update($, snapshot, () => snap)
-  // The status line speaks for this project: setups used here but off, and what could be split out.
-  const offHere = snap.combos.filter(c => usedOffHere(c, snap.cwdProject)).map(c => c.name)
+  // The status line speaks for this project: kits used here but off, and what could be split out.
+  const offHere = snap.kits.filter(c => usedOffHere(c, snap.cwdProject)).map(c => c.name)
   const parts = [
     offHere.length ? `${offHere.join(', ')} off here` : '',
     snap.bundles.length ? `${snap.bundles.length} to make local` : '',
@@ -492,7 +506,7 @@ async function act($: $T, rcOption: string, label: string, work: () => Promise<s
   }
 }
 
-async function runCombo($: $T, p: Paths, name: string, project: string, off: boolean) {
+async function runKit($: $T, p: Paths, name: string, project: string, off: boolean) {
   const fn = `cc-${name}${off ? '-off' : ''}`
   const ran = await $.process
     .run(['bash', '-c', '. "$0" && "$1"', p.script, fn], { cwd: project, timeoutMs: 600000 })
@@ -523,9 +537,9 @@ async function removeGlobal($: $T, item: GlobalItem, backup: string): Promise<st
 async function enable($: $T, opts: Opts, name: string, project: string, off: boolean): Promise<string> {
   const p = await paths($, opts.rc)
   const reg = await loadRegistry($, p)
-  if (!reg.combos[name]) return `No combo named ${name}.`
+  if (!reg.kits[name]) return `No kit named ${name}.`
   await saveRegistry($, p, reg)
-  const { ok, out } = await runCombo($, p, name, project, off)
+  const { ok, out } = await runKit($, p, name, project, off)
   const where = shortPath(project, p.home)
   if (ok) await markOn($, name, project, !off)
   return ok
@@ -533,12 +547,12 @@ async function enable($: $T, opts: Opts, name: string, project: string, off: boo
     : `cc-${name}${off ? '-off' : ''} failed in ${where}: ${out}`
 }
 
-/** Enable a combo everywhere it was used, then take its parts out of the global scope. `answer` skips the question. */
+/** Enable a kit everywhere it was used, then take its parts out of the global scope. `answer` skips the question. */
 async function adopt($: $T, opts: Opts, name: string, answer?: 'Adopt' | 'Only enable'): Promise<string> {
   const p = await paths($, opts.rc)
   const snap = (await read($, snapshot)) ?? (await rescan($, opts.rc))
-  const row = snap.combos.find(c => c.name === name)
-  if (!row) return `No combo named ${name}.`
+  const row = snap.kits.find(c => c.name === name)
+  if (!row) return `No kit named ${name}.`
   const targets = row.projects.filter(pr => pr.status !== 'on' && pr.n > 0).map(pr => pr.project)
   const globals = snap.items.filter(i => row.globals.includes(i.id))
   const plan = [
@@ -558,7 +572,7 @@ async function adopt($: $T, opts: Opts, name: string, answer?: 'Adopt' | 'Only e
   const failed: string[] = []
   for (const project of targets) {
     await update($, busy, () => `Enabling ${name} in ${shortPath(project, p.home)}…`)
-    const { ok, out } = await runCombo($, p, name, project, false)
+    const { ok, out } = await runKit($, p, name, project, false)
     if (ok) await markOn($, name, project, true)
     else failed.push(`${shortPath(project, p.home)}: ${out}`)
   }
@@ -591,7 +605,7 @@ async function removeOne($: $T, opts: Opts, id: string): Promise<string> {
   if (!snap.backfilledAt) return `Usage history is still loading; ${item.name} was kept. Try again once the counts are in.`
   const since = snap.historySince ? ` since ${day(snap.historySince, snap.scannedAt)}` : ''
   const where = item.uses.length
-    ? ` It was used in ${plural(item.uses.length, 'project')}${since}; no combo will bring it back.`
+    ? ` It was used in ${plural(item.uses.length, 'project')}${since}; no kit will bring it back.`
     : ` No recorded use${since}.`
   const answer = await $.ui
     .ask(`Remove ${item.kind} ${item.name} from your global setup?${where}`, { header: 'Remove', options: ['Remove', 'Cancel'] })
@@ -602,27 +616,27 @@ async function removeOne($: $T, opts: Opts, id: string): Promise<string> {
   return error ?? `Removed ${item.name} (backup: ${shortPath(backup, p.home)}). Run /reload-plugins.`
 }
 
-/** The parts a combo installs, cut to fit a question. */
-const installList = (row: ComboRow) => row.parts.map(line => clip(line, 140)).join('; ')
+/** The parts a kit installs, cut to fit a question. */
+const installList = (row: KitRow) => row.parts.map(line => clip(line, 140)).join('; ')
 
-/** Asks before enabling (saying what it installs and runs) or removing a combo in one project. */
-async function toggleCombo($: $T, opts: Opts, row: ComboRow, project: string, off: boolean, home: string): Promise<string> {
+/** Asks before enabling (saying what it installs and runs) or removing a kit in one project. */
+async function toggleKit($: $T, opts: Opts, row: KitRow, project: string, off: boolean, home: string): Promise<string> {
   const where = shortPath(project, home)
   const question = off
     ? `Remove ${row.name} from ${where}?`
     : `Enable ${row.name} in ${where}? It installs: ${installList(row)}.`
   const answer = await $.ui
-    .ask(question, { header: 'Combo', options: [off ? 'Remove' : 'Enable', 'Cancel'] })
+    .ask(question, { header: 'Kit', options: [off ? 'Remove' : 'Enable', 'Cancel'] })
     .catch(() => 'Cancel')
   return answer === 'Remove' || answer === 'Enable' ? enable($, opts, row.name, project, off) : 'Cancelled.'
 }
 
-/** Turns on, after one question, every setup used in this project but off here. */
-async function turnOnUsed($: $T, opts: Opts, rows: ComboRow[], project: string, home: string): Promise<string> {
+/** Turns on, after one question, every kit used in this project but off here. */
+async function turnOnUsed($: $T, opts: Opts, rows: KitRow[], project: string, home: string): Promise<string> {
   const where = shortPath(project, home)
   const names = rows.map(r => r.name).join(', ')
   const answer = await $.ui
-    .ask(`Enable ${names} in ${where}? It installs: ${rows.map(installList).join('; ')}.`, { header: 'Combo', options: ['Enable', 'Cancel'] })
+    .ask(`Enable ${names} in ${where}? It installs: ${rows.map(installList).join('; ')}.`, { header: 'Kit', options: ['Enable', 'Cancel'] })
     .catch(() => 'Cancel')
   if (answer !== 'Enable') return 'Cancelled.'
   const failed: string[] = []
@@ -636,11 +650,11 @@ async function turnOnUsed($: $T, opts: Opts, rows: ComboRow[], project: string, 
     : `Enabled ${names} in ${where}. Run /reload-plugins there if a session is open.`
 }
 
-/** Takes a combo out of every project where it sat unused for staleDays. */
+/** Takes a kit out of every project where it sat unused for staleDays. */
 async function prune($: $T, opts: Opts, name: string): Promise<string> {
   const p = await paths($, opts.rc)
-  const row = (await read($, snapshot))?.combos.find(c => c.name === name)
-  if (!row) return `No combo named ${name}.`
+  const row = (await read($, snapshot))?.kits.find(c => c.name === name)
+  if (!row) return `No kit named ${name}.`
   const now = await $.clock.now()
   const stale = row.projects.filter(pr => isStale(pr, now, opts.staleDays)).map(pr => pr.project)
   if (!stale.length) return `${name} is not stale anywhere.`
@@ -652,7 +666,7 @@ async function prune($: $T, opts: Opts, name: string): Promise<string> {
   const failed: string[] = []
   for (const project of stale) {
     await update($, busy, () => `Removing ${name} from ${shortPath(project, p.home)}…`)
-    const { ok, out } = await runCombo($, p, name, project, true)
+    const { ok, out } = await runKit($, p, name, project, true)
     if (ok) await markOn($, name, project, false)
     else failed.push(`${shortPath(project, p.home)}: ${out}`)
   }
@@ -662,21 +676,21 @@ async function prune($: $T, opts: Opts, name: string): Promise<string> {
 }
 
 /**
- * Turns a suggested bundle into a combo, on in the projects that used it, its globals removed.
+ * Turns a suggested bundle into a kit, on in the projects that used it, its globals removed.
  * Plugins and MCP servers are done here; skills and agents go to Claude, which works out where they come from.
  */
 async function makeLocal($: $T, opts: Opts, bundle: Bundle, items: ItemRow[]): Promise<string> {
   const members = items.filter(i => bundle.ids.includes(i.id))
   if (!bundle.direct) {
     void $.prompt.submit({
-      text: `${TRIAGE}\n\nStart with these only; they look like one combo (${bundle.why}): ${bundle.ids.join(', ')}. Suggested name: ${bundle.name}.`,
+      text: `${TRIAGE}\n\nStart with these only; they look like one kit (${bundle.why}): ${bundle.ids.join(', ')}. Suggested name: ${bundle.name}.`,
     })
     return `Asking Claude to set up ${bundle.name}…`
   }
   const p = await paths($, opts.rc)
   const reg = await loadRegistry($, p)
   let name = bundle.name
-  for (let n = 2; reg.combos[name]; n++) name = `${bundle.name}-${n}`
+  for (let n = 2; reg.kits[name]; n++) name = `${bundle.name}-${n}`
   const where = bundle.projects.map(pr => shortPath(pr.project, p.home))
   const answer = await $.ui
     .ask(`Make ${members.map(m => m.name).join(', ')} local as cc-${name}? It turns ${members.length > 1 ? 'them' : 'it'} on in ${where.join(', ')}, then removes the global install${members.length > 1 ? 's' : ''} (backed up first).`,
@@ -687,31 +701,31 @@ async function makeLocal($: $T, opts: Opts, bundle: Bundle, items: ItemRow[]): P
   const parts: Part[] = members.map(m => (m.kind === 'plugin'
     ? { kind: 'plugin', id: m.ref }
     : { kind: 'mcp', name: m.name, config: global.mcpServers?.[m.name] ?? {} }))
-  const saved = await saveCombo($, opts, name, { parts })
+  const saved = await saveKit($, opts, name, { parts })
   if (saved.startsWith('Not saved')) return saved
   await rescan($, opts.rc)
   return adopt($, opts, name, answer === 'Make local' ? 'Adopt' : 'Only enable')
 }
 
-async function saveCombo($: $T, opts: Opts, name: string, combo: Combo): Promise<string> {
-  const errors = validateCombo(name, combo)
+async function saveKit($: $T, opts: Opts, name: string, kit: Kit): Promise<string> {
+  const errors = validateKit(name, kit)
   if (errors.length) return `Not saved:\n- ${errors.join('\n- ')}`
   const p = await paths($, opts.rc)
   const reg = await loadRegistry($, p)
-  const isNew = !reg.combos[name]
-  reg.combos[name] = { description: combo.description, parts: combo.parts }
+  const isNew = !reg.kits[name]
+  reg.kits[name] = { description: kit.description, parts: kit.parts }
   await saveRegistry($, p, reg)
   const missing = await rcMissing($, p)
-  return `${isNew ? 'Saved' : 'Updated'} combo ${name}: cc-${name} and cc-${name}-off are in ${shortPath(p.script, p.home)}` +
+  return `${isNew ? 'Saved' : 'Updated'} kit ${name}: cc-${name} and cc-${name}-off are in ${shortPath(p.script, p.home)}` +
     `${missing.length ? ` (not loaded by ${listFiles(missing, p.home)} yet: Adopt adds the line)` : ''}. The person adopts it from the /scope pane.`
 }
 
 const TRIAGE = `Triage my global Claude Code installs with the scopekeeper tools.
-1. Call ${TOOL('inventory')}: it lists every user-scope plugin, skill, agent and MCP server, how much each was used and in which projects, and the combos I already have.
+1. Call ${TOOL('inventory')}: it lists every user-scope plugin, skill, agent and MCP server, how much each was used and in which projects, and the kits I already have.
 2. For each item whose claim is "new", find out how it was installed: a plugin is name@marketplace; for a skill, check whether ~/.claude/skills/<name> is a symlink and where it points, look for a lock file (~/.agents/.skill-lock.json) or a README naming an installer (\`npx <tool> install --project\`); find which skill or installer ships each agent. Group what belongs together, starting from inventory's \`suggested.bundles\` (detected from co-use, names and shared projects): a plugin and the MCP server or skill it needs, a skill and its agents.
-3. Decide per group: keep global (general purpose, used across most projects, or the statusline/terminal kind), or a combo. Ask me with AskUserQuestion, one question per group, your recommendation first.
-4. Save what I confirm: ${TOOL('save_combo')} for combos, ${TOOL('keep_global')} for keep-globals.
-Never install, uninstall, move or delete anything yourself: I adopt combos from the /scope pane, which enables them in the right projects and removes the globals.`
+3. Decide per group: keep global (general purpose, used across most projects, or the statusline/terminal kind), or a kit. Ask me with AskUserQuestion, one question per group, your recommendation first.
+4. Save what I confirm: ${TOOL('save_kit')} for kits, ${TOOL('keep_global')} for keep-globals.
+Never install, uninstall, move or delete anything yourself: I adopt kits from the /scope pane, which enables them in the right projects and removes the globals.`
 
 // ---------------------------------------------------------------- the pane
 
@@ -720,7 +734,7 @@ type Opts = { rc: string; staleDays: number }
 const KIND = { plugin: 'plugin', skill: 'skill', agent: 'agent', mcp: 'mcp' } as const
 
 /** Each view's help: what it shows and what to do there, for someone who has never used scopekeeper. */
-type HelpView = 'local' | 'globals' | 'combos'
+type HelpView = 'local' | 'globals' | 'kits'
 // One short line each, so the box fits the pane's default width without wrapping (a test holds it).
 // Runs are styled as the pane draws the same thing: headings bold, hotkeys in the accent color,
 // ● green, ◆ and what needs a look yellow; the line that says what the view is for, and the reassurance, dim.
@@ -733,7 +747,7 @@ const yellow = (t: string) => ({ t, s: 'warn' } as const)
 const HELP: Record<HelpView, HelpLine[]> = {
   local: [
     { dim: 'Load tools only in the projects that need them.' },
-    [bold('In this project'), ': your groups of tools (setups)'],
+    [bold('In this project'), ': your kits (groups of tools)'],
     ['  ', green('●'), ' on · ○ off - turn tool on/off'],
     ['  ', yellow('used 3d ago'), ' - tool used here previously, is off'],
     [bold('Global'), ':'],
@@ -745,19 +759,19 @@ const HELP: Record<HelpView, HelpLine[]> = {
     { dim: 'Global installs load in every project, used or not.' },
     [bold('status')],
     ['  ', yellow('new'), ': unsorted · keep: stays global on purpose'],
-    ['  ', yellow('→ name'), ': that combo covers it, but it is still global'],
+    ['  ', yellow('→ name'), ': that kit covers it, but it is still global'],
     ['Enter opens a row, then:'],
     ['  ', hot('k'), ': Keep global · ', hot('x'), ': Remove global'],
-    ['  ', hot('m'), ': Make a new combo from global'],
-    ['  ', hot('o'), ': Adopt (turns existing combo on, removes the global)'],
+    ['  ', hot('m'), ': Make a new kit from global'],
+    ['  ', hot('o'), ': Adopt (turns existing kit on, removes the global)'],
   ],
-  combos: [
-    { dim: 'A combo is a group of tools you turn on per project.' },
+  kits: [
+    { dim: 'A kit is a group of tools you turn on per project.' },
     [bold('on in'), '  how many projects have it fully on'],
     [bold('to do'), '  ', yellow('adopt'), ': its tools are still installed globally'],
     ['       ', yellow('turn on N'), ': used but off in N projects'],
     ['       ', yellow('prune N'), ': on, but unused lately, in N projects'],
-    ['Enter opens a combo, then:'],
+    ['Enter opens a kit, then:'],
     ['  Enter on a project turns it on or off there'],
     ['  ', hot('o'), ': Adopt · ', hot('e'), ': Enable here · ', hot('p'), ': Prune stale'],
   ],
@@ -810,11 +824,11 @@ async function setView($: $T, next: Partial<View>): Promise<void> {
   await update($, view, v => ({ ...v, ...next }))
 }
 
-const comboOf = (claim: string) => claim.slice('combo:'.length)
+const kitOf = (claim: string) => claim.slice('kit:'.length)
 
-/** The status cell: an install a combo covers is still global, so it waits on Adopt. */
+/** The status cell: an install a kit covers is still global, so it waits on Adopt. */
 function claimText(claim: string): string {
-  return claim === 'new' ? 'new' : claim === 'keep' ? 'keep' : `→ ${comboOf(claim)}`
+  return claim === 'new' ? 'new' : claim === 'keep' ? 'keep' : `→ ${kitOf(claim)}`
 }
 
 const PART_SCHEMA = {
@@ -837,17 +851,17 @@ export const register: Register = (on, options) => {
     const started = await next(e)
     await $.command.register({
       name: 'scope',
-      description: 'Global installs vs real usage, and per-project cc-* combos',
-      argumentHint: '[advanced | audit | triage | backfill | enable <combo> | off <combo> | adopt <combo>]',
+      description: 'Global installs vs real usage, and per-project cc-* kits',
+      argumentHint: '[advanced | audit | triage | backfill | enable <kit> | off <kit> | adopt <kit>]',
     })
     await $.tool.register({
       name: 'inventory',
-      description: 'scopekeeper: every user-scope plugin, skill, agent and MCP server with its usage per project, its claim (keep / combo:<name> / new), and the saved combos with where each is enabled.',
+      description: 'scopekeeper: every user-scope plugin, skill, agent and MCP server with its usage per project, its claim (keep / kit:<name> / new), and the saved kits with where each is enabled.',
       inputSchema: { type: 'object', properties: {} },
     })
     await $.tool.register({
-      name: 'save_combo',
-      description: 'scopekeeper: save (or replace) a combo: the parts that cc-<name> installs in a project at local scope, kept out of git. Regenerates the cc-* functions. Installs and removes nothing.',
+      name: 'save_kit',
+      description: 'scopekeeper: save (or replace) a kit: the parts that cc-<name> installs in a project at local scope, kept out of git. Regenerates the cc-* functions. Installs and removes nothing.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -869,7 +883,8 @@ export const register: Register = (on, options) => {
     })
     void (async () => {
       sessionProject = (await projectRoot($, e.cwd)) ?? undefined
-      const hidden = (await $.store.get('helpHidden')) as string[] | undefined
+      // The kits tab was the combos tab: help hidden there stays hidden.
+      const hidden = ((await $.store.get('helpHidden')) as string[] | undefined)?.map(h => (h === 'combos' ? 'kits' : h))
       if (hidden?.length) await update($, helpHidden, () => hidden)
       sessionId = await $.session.id()
       await loadLedger($)
@@ -909,16 +924,16 @@ export const register: Register = (on, options) => {
       lastUsed: i.last ? new Date(i.last).toISOString().slice(0, 10) : null,
       projects: i.uses.slice(0, 12).map(u => ({ project: u.project, calls: u.n })),
     }))
-    const combos = Object.fromEntries(Object.entries(reg.combos).map(([name, c]) => [name, {
-      ...c, projects: snap.combos.find(r => r.name === name)?.projects ?? [],
+    const kits = Object.fromEntries(Object.entries(reg.kits).map(([name, c]) => [name, {
+      ...c, projects: snap.kits.find(r => r.name === name)?.projects ?? [],
     }]))
     const suggested = { bundles: snap.bundles.map(b => ({ name: b.name, ids: b.ids, why: b.why })), usedEverywhere: snap.everywhere, unused: snap.unused }
-    return { result: JSON.stringify({ home: p.home, items, combos, keepGlobal: reg.keepGlobal, suggested }, null, 1) }
+    return { result: JSON.stringify({ home: p.home, items, kits, keepGlobal: reg.keepGlobal, suggested }, null, 1) }
   })
 
-  on('tool.call', { tool: 'mcp__scopekeeper__save_combo' }, async ($, e) => {
+  on('tool.call', { tool: 'mcp__scopekeeper__save_kit' }, async ($, e) => {
     const input = e as unknown as { name?: string; description?: string; parts?: Part[] }
-    const text = await saveCombo($, opts, String(input.name ?? ''), { description: input.description, parts: input.parts ?? [] })
+    const text = await saveKit($, opts, String(input.name ?? ''), { description: input.description, parts: input.parts ?? [] })
     void rescan($, opts.rc)
     return { result: text }
   })
@@ -980,13 +995,13 @@ export const register: Register = (on, options) => {
     const run = (label: string, work: () => Promise<string>) => () => act($, opts.rc, label, work).then(() => undefined)
     const nameOf = (id: string) => snap.items.find(i => i.id === id)?.name ?? id
     const kept = snap.items.filter(i => i.claim === 'keep').length
-    // Setups used here but off come first: they are the ones waiting on a decision.
-    const hereCombos = here ? [...snap.combos].sort((a, b) => Number(usedOffHere(b, here)) - Number(usedOffHere(a, here))) : []
-    const usedOff = hereCombos.filter(c => usedOffHere(c, here))
+    // Kits used here but off come first: they are the ones waiting on a decision.
+    const hereKits = here ? [...snap.kits].sort((a, b) => Number(usedOffHere(b, here)) - Number(usedOffHere(a, here))) : []
+    const usedOff = hereKits.filter(c => usedOffHere(c, here))
 
-    // Rows in order: this project's setups, the bundles to make local, then what to keep global.
+    // Rows in order: this project's kits, the bundles to make local, then what to keep global.
     const keys = [
-      ...hereCombos.map(c => `here:${c.name}`),
+      ...hereKits.map(c => `here:${c.name}`),
       ...snap.bundles.map(b => `sug:${b.id}`),
       ...(snap.everywhere.length ? ['sug:everywhere'] : []),
     ]
@@ -1001,11 +1016,11 @@ export const register: Register = (on, options) => {
     )
     const heading = (text: string) => <Text bold>{text}</Text>
 
-    // ---- this project: each setup, ● on or ○ off, Enter to toggle; the last cell only for what needs a look
-    const nameW = Math.min(16, Math.max(8, ...snap.combos.map(c => c.name.length + 1)))
+    // ---- this project: each kit, ● on or ○ off, Enter to toggle; the last cell only for what needs a look
+    const nameW = Math.min(16, Math.max(8, ...snap.kits.map(c => c.name.length + 1)))
     const stateW = 12
     const sumW = Math.max(0, W - 4 - nameW - stateW)
-    const hereRow = (c: ComboRow) => {
+    const hereRow = (c: KitRow) => {
       const key = `here:${c.name}`
       const pr = statusIn(c, here)
       const isOn = pr?.status === 'on'
@@ -1015,7 +1030,7 @@ export const register: Register = (on, options) => {
         : isUsedOff ? `used ${ago(pr!.last, snap.scannedAt)} ago` : pr?.status === 'partial' ? 'partial' : ''
       return [
         <Button key={key} plain autoFocus={first(key)}
-          onPress={run(`${isOn ? 'Turning off' : 'Turning on'} ${c.name}…`, () => toggleCombo($, opts, c, here, isOn, home))}>
+          onPress={run(`${isOn ? 'Turning off' : 'Turning on'} ${c.name}…`, () => toggleKit($, opts, c, here, isOn, home))}>
           <Text>{'  '}</Text>
           <Text color={isOn ? 'green' : isUsedOff || pr?.status === 'partial' ? 'yellow' : undefined} dimColor={!pr}>{mark} </Text>
           <Text>{fit(c.name, nameW)}</Text>
@@ -1092,8 +1107,8 @@ export const register: Register = (on, options) => {
       snap.unused.length ? `${snap.unused.length} never used` : '',
     ].filter(Boolean)
     // The keys row names what Enter does on the row under the cursor.
-    const curCombo = hereCombos.find(c => `here:${c.name}` === cur)
-    const enterHint = curCombo ? `Turn ${statusIn(curCombo, here)?.status === 'on' ? 'off' : 'on'}`
+    const curKit = hereKits.find(c => `here:${c.name}` === cur)
+    const enterHint = curKit ? `Turn ${statusIn(curKit, here)?.status === 'on' ? 'off' : 'on'}`
       : cur.startsWith('sug:') ? (cur === open ? 'Close' : 'Open') : ''
     const name = here.split('/').pop() ?? ''
     const lastLine = lines.filter(worthLogging).at(-1) ?? ''
@@ -1107,7 +1122,7 @@ export const register: Register = (on, options) => {
         ) : (
           <Text wrap="truncate-end">
             <Text bold>Not in a project</Text>
-            <Text dimColor>  open /scope from a project to toggle setups</Text>
+            <Text dimColor>  open /scope from a project to toggle kits</Text>
           </Text>
         )}
         <Box flexDirection="row" columnGap={2} flexWrap="wrap">
@@ -1126,8 +1141,8 @@ export const register: Register = (on, options) => {
         {here !== '' && (
           <Box flexDirection="column">
             {heading('In this project')}
-            {snap.combos.length === 0 && <Text dimColor>No setups yet: make one local below.</Text>}
-            {hereCombos.flatMap(hereRow)}
+            {snap.kits.length === 0 && <Text dimColor>No kits yet: make one local below.</Text>}
+            {hereKits.flatMap(hereRow)}
             {usedOff.length > 0 && (
               <Button key="turn-on-used" hotkey="y" plain dimColor={doing !== ''}
                 onPress={run('Turning on…', () => turnOnUsed($, opts, usedOff, here, home))}>
@@ -1175,8 +1190,8 @@ export const register: Register = (on, options) => {
     const loading = !snap.backfilledAt
     const since = snap.historySince ? ` since ${day(snap.historySince, now)}` : ''
     const wide = W >= 56
-    const stale = (pr: ComboProject) => isStale(pr, now, opts.staleDays)
-    const pendingOf = (c: ComboRow) => c.projects.filter(pr => pr.status !== 'on' && pr.n > 0).length
+    const stale = (pr: KitProject) => isStale(pr, now, opts.staleDays)
+    const pendingOf = (c: KitRow) => c.projects.filter(pr => pr.status !== 'on' && pr.n > 0).length
 
     // Hotkeys show on the terminal only on plain Buttons (`k: Keep`), so every action is plain.
     const action = (hotkey: string, id: string, label: string, onPress: () => unknown) => (
@@ -1196,7 +1211,7 @@ export const register: Register = (on, options) => {
     const shown = v.showKept ? sorted : open
     // Nothing is open until Enter opens a row; Enter on the open row closes it.
     const selItem = v.tab === 'globals' ? shown.find(i => i.id === v.selected) : undefined
-    const selCombo = v.tab === 'combos' ? snap.combos.find(c => c.name === v.selected) : undefined
+    const selKit = v.tab === 'kits' ? snap.kits.find(c => c.name === v.selected) : undefined
     const toggle = (id: string) => () => update($, view, cur => ({ ...cur, selected: cur.selected === id ? '' : id }))
 
     // The open row's actions sit at the end of its details, so a hotkey acts on what is shown open.
@@ -1204,22 +1219,22 @@ export const register: Register = (on, options) => {
       <Box flexDirection="row" columnGap={2} flexWrap="wrap">{buttons.filter(b => b !== false)}</Box>
     )
     const itemActions = (i: ItemRow) => {
-      const combo = comboOf(i.claim)
+      const kit = kitOf(i.claim)
       return actions([
-        i.claim.startsWith('combo:')
-          ? action('o', 'adopt', `Adopt ${combo}`, run(`Adopting ${combo}…`, () => adopt($, opts, combo)))
-          : action('m', 'make', 'Make a combo', () => void $.prompt.submit({ text: `${TRIAGE}\n\nStart with ${i.id} only.` })),
+        i.claim.startsWith('kit:')
+          ? action('o', 'adopt', `Adopt ${kit}`, run(`Adopting ${kit}…`, () => adopt($, opts, kit)))
+          : action('m', 'make', 'Make a kit', () => void $.prompt.submit({ text: `${TRIAGE}\n\nStart with ${i.id} only.` })),
         i.claim === 'new' && action('k', 'keep', 'Keep global', run('Saving…', () => keepGlobal($, opts, [i.id], true))),
         i.claim === 'keep' && action('u', 'unkeep', 'Unkeep', run('Saving…', () => keepGlobal($, opts, [i.id], false))),
         !loading && action('x', 'remove', 'Remove', run(`Removing ${i.name}…`, () => removeOne($, opts, i.id))),
       ])
     }
-    const comboActions = (c: ComboRow) => {
+    const kitActions = (c: KitRow) => {
       const staleN = c.projects.filter(stale).length
       return actions([
         (c.globals.length > 0 || pendingOf(c) > 0) && action('o', 'adopt', 'Adopt', run(`Adopting ${c.name}…`, () => adopt($, opts, c.name))),
         snap.cwdProject !== '' && c.projects.find(pr => pr.project === snap.cwdProject)?.status !== 'on'
-          && action('e', 'enable', 'Enable here', run(`Enabling ${c.name}…`, () => toggleCombo($, opts, c, snap.cwdProject, false, home))),
+          && action('e', 'enable', 'Enable here', run(`Enabling ${c.name}…`, () => toggleKit($, opts, c, snap.cwdProject, false, home))),
         staleN > 0 && action('p', 'prune', `Prune ${staleN} stale`, run(`Pruning ${c.name}…`, () => prune($, opts, c.name))),
       ])
     }
@@ -1228,9 +1243,9 @@ export const register: Register = (on, options) => {
     const enterHint = (() => {
       if (cursor === 'kept') return v.showKept ? 'Hide kept' : 'Show kept'
       if (cursor.startsWith('item:')) return cursor.slice('item:'.length) === selItem?.id ? 'Close' : 'Open'
-      if (cursor.startsWith('combo:')) return cursor.slice('combo:'.length) === selCombo?.name ? 'Close' : 'Open'
-      if (!cursor.startsWith('proj:') || !selCombo) return ''
-      const pr = selCombo.projects.find(p => cursor === `proj:${selCombo.name}:${p.project}`)
+      if (cursor.startsWith('kit:')) return cursor.slice('kit:'.length) === selKit?.name ? 'Close' : 'Open'
+      if (!cursor.startsWith('proj:') || !selKit) return ''
+      const pr = selKit.projects.find(p => cursor === `proj:${selKit.name}:${p.project}`)
       return pr ? `Turn ${pr.status === 'on' ? 'off' : 'on'} there` : ''
     })()
 
@@ -1244,14 +1259,14 @@ export const register: Register = (on, options) => {
     ].filter(Boolean).join(' · ')
     const header = (
       <Box flexDirection="column">
-        <Text dimColor>{plural(snap.items.length, 'global')} · {plural(snap.combos.length, 'combo')}{snap.historySince ? ` · usage${since}` : ''}</Text>
+        <Text dimColor>{plural(snap.items.length, 'global')} · {plural(snap.kits.length, 'kit')}{snap.historySince ? ` · usage${since}` : ''}</Text>
         {waiting ? <Text color="yellow">▸ {waiting}</Text> : <Text color="green">✓ Nothing waiting on you</Text>}
         <Box flexDirection="row" columnGap={2} flexWrap="wrap">
           {tab('globals', 'g', 'Globals')}
-          {tab('combos', 'c', 'Combos')}
+          {tab('kits', 'i', 'Kits')}
           <Button key="local" hotkey="a" plain onPress={() => void switchMode($, 'local')}>Back to local</Button>
           <Button key="rescan" hotkey="r" plain dimColor={doing !== ''} onPress={run('Rescanning…', async () => '', true)}>Rescan</Button>
-          {!snap.rcLoaded && snap.combos.length > 0 && (
+          {!snap.rcLoaded && snap.kits.length > 0 && (
             <Button key="shell" hotkey="s" plain dimColor={doing !== ''} onPress={run('Setting up your shell…', async () =>
               (await ensureRc($, await paths($, opts.rc))) ? 'cc-* functions load in new shells from now on.' : 'Left your shell files as they are.')}>
               Set up shell
@@ -1286,16 +1301,16 @@ export const register: Register = (on, options) => {
       const num = (s: string, w: number) => fit(loading ? '…' : s, w)
 
       const detail = (i: ItemRow) => {
-        const combo = comboOf(i.claim)
+        const kit = kitOf(i.claim)
         const why = i.claim === 'new'
-          ? 'Unsorted: keep it global if you use it everywhere, or make a combo so it loads only where you need it.'
+          ? 'Unsorted: keep it global if you use it everywhere, or make a kit so it loads only where you need it.'
           : i.claim === 'keep' ? 'Kept global on purpose.'
-          : `Covered by combo ${combo}, but still installed globally. Adopt enables ${combo} where it was used, then removes this global.`
+          : `Covered by kit ${kit}, but still installed globally. Adopt enables ${kit} where it was used, then removes this global.`
         return (
           // The actions first, with what they would do, so a long usage list never pushes them out of view.
           <Box key={`detail:${i.id}`} flexDirection="column" paddingLeft={4} marginBottom={1}>
             {itemActions(i)}
-            <Text color={i.claim.startsWith('combo:') ? 'yellow' : undefined} dimColor={!i.claim.startsWith('combo:')}>{why}</Text>
+            <Text color={i.claim.startsWith('kit:') ? 'yellow' : undefined} dimColor={!i.claim.startsWith('kit:')}>{why}</Text>
             {!(i.kind === 'mcp' && i.ref === i.name) && <Text dimColor wrap="truncate-middle">{shortPath(i.ref, home)}</Text>}
             {loading && <Text dimColor>Usage: still reading your transcripts…</Text>}
             {!loading && i.uses.length === 0 && <Text dimColor>No recorded use{since}.</Text>}
@@ -1342,16 +1357,16 @@ export const register: Register = (on, options) => {
     }
 
     // Columns sum to W exactly: marker 2, name, summary (wide only), on in 6, to do 10.
-    const cNameW = Math.min(16, Math.max(8, ...snap.combos.map(c => c.name.length + 1)))
+    const cNameW = Math.min(16, Math.max(8, ...snap.kits.map(c => c.name.length + 1)))
     const sumW = wide ? W - 18 - cNameW : 0
     const cNameCol = wide ? cNameW : W - 18
 
-    const comboDetail = (c: ComboRow) => {
+    const kitDetail = (c: KitRow) => {
       const pending = pendingOf(c)
       return (
         // The actions first, with what Adopt would do; then the parts, and the projects with how to toggle them.
         <Box key={`detail:${c.name}`} flexDirection="column" paddingLeft={4} marginBottom={1}>
-          {comboActions(c)}
+          {kitActions(c)}
           {c.globals.length > 0 && (
             <Text color="yellow">Still installed globally: {c.globals.join(', ')}. Adopt enables {c.name} where it was used, then removes the global{c.globals.length > 1 ? 's' : ''}.</Text>
           )}
@@ -1371,7 +1386,7 @@ export const register: Register = (on, options) => {
             const toOff = pr.status === 'on'
             return (
               <Button key={`proj:${c.name}:${pr.project}`} plain
-                onPress={run(`${toOff ? 'Removing' : 'Enabling'} ${c.name}…`, () => toggleCombo($, opts, c, pr.project, toOff, home))}>
+                onPress={run(`${toOff ? 'Removing' : 'Enabling'} ${c.name}…`, () => toggleKit($, opts, c, pr.project, toOff, home))}>
                 <Text color={pr.status === 'on' ? 'green' : 'yellow'}>{mark} </Text>
                 {fit(shortPath(pr.project, home), W - 29)}{' '}
                 <Text dimColor>{fit(count(pr.n), 6)}{fit(ago(pr.last, now), 6)}</Text>
@@ -1387,26 +1402,26 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column">
         {header}
         {rule}
-        {snap.combos.length === 0 && <Text dimColor>No combos yet. Press m on an unsorted global, or t to triage them all with Claude.</Text>}
-        {snap.combos.length > 0 && (
-          <Text dimColor>{'  '}{fit('combo', cNameCol)}{sumW ? fit('what', sumW) : ''}{fit('on in', 6)}to do</Text>
+        {snap.kits.length === 0 && <Text dimColor>No kits yet. Press m on an unsorted global, or t to triage them all with Claude.</Text>}
+        {snap.kits.length > 0 && (
+          <Text dimColor>{'  '}{fit('kit', cNameCol)}{sumW ? fit('what', sumW) : ''}{fit('on in', 6)}to do</Text>
         )}
-        {snap.combos.flatMap((c, n) => {
-          const isSel = c.name === selCombo?.name
+        {snap.kits.flatMap((c, n) => {
+          const isSel = c.name === selKit?.name
           const pending = pendingOf(c)
           const staleN = c.projects.filter(stale).length
           const onN = c.projects.filter(pr => pr.status === 'on').length
           // Verbs that match the open row's actions: o Adopt, Enter on a project, p Prune.
           const todo = c.globals.length ? 'adopt' : pending ? `turn on ${pending}` : staleN ? `prune ${staleN}` : ''
           return [
-            <Button key={`combo:${c.name}`} plain autoFocus={n === 0 ? true : undefined} onPress={toggle(c.name)}>
+            <Button key={`kit:${c.name}`} plain autoFocus={n === 0 ? true : undefined} onPress={toggle(c.name)}>
               <Text bold>{isSel ? '› ' : '  '}</Text>
               <Text bold>{fit(c.name, cNameCol - 1)} </Text>
               <Text dimColor>{sumW ? `${fit(c.summary, sumW - 1)} ` : ''}</Text>
               <Text dimColor={onN === 0}>{fit(onN ? String(onN) : '—', 6)}</Text>
               <Text color="yellow">{clip(todo, 10)}</Text>
             </Button>,
-            isSel ? comboDetail(c) : null,
+            isSel ? kitDetail(c) : null,
           ]
         })}
         {logLines}
@@ -1433,9 +1448,9 @@ function auditText(snap: Snapshot, home: string, staleDays: number): string {
   for (const i of [...snap.items].sort((a, b) => b.total - a.total)) {
     out.push(`  ${fit(i.kind, 7)}${fit(i.name, 28)} ${fit(count(i.total), 6)}${fit(ago(i.last, now), 6)}${fit(String(i.uses.length), 4)}${claimText(i.claim)}`)
   }
-  out.push('', 'Combos:')
-  if (!snap.combos.length) out.push('  none yet: /scope triage')
-  for (const c of snap.combos) {
+  out.push('', 'Kits:')
+  if (!snap.kits.length) out.push('  none yet: /scope triage')
+  for (const c of snap.kits) {
     const on = c.projects.filter(pr => pr.status === 'on').map(pr => shortPath(pr.project, home))
     const pending = c.projects.filter(pr => pr.status !== 'on' && pr.n > 0).map(pr => shortPath(pr.project, home))
     const stale = c.projects.filter(pr => isStale(pr, now, staleDays)).map(pr => shortPath(pr.project, home))

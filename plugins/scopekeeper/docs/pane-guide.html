@@ -147,12 +147,12 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--ru
   <header class="intro">
     <span class="eyebrow">scopekeeper · /scope</span>
     <h1>Scopekeeper Pane Guide</h1>
-    <p class="lede">The pane opened by <code>/scope</code> shows what is installed globally in Claude Code, how much you use each piece and where, and the per-project combos that replace them. This guide walks through each view and every key.</p>
+    <p class="lede">The pane opened by <code>/scope</code> shows what is installed globally in Claude Code, how much you use each piece and where, and the per-project kits that replace them. This guide walks through each view and every key.</p>
     <nav class="toc" aria-label="Sections">
       <a href="#moving">Moving around</a>
       <a href="#header">Header</a>
       <a href="#globals">Globals tab</a>
-      <a href="#combos">Combos tab</a>
+      <a href="#kits">Kits tab</a>
       <a href="#confirm">Confirmations</a>
       <a href="#keys">All keys</a>
       <a href="#commands">Commands</a>
@@ -167,7 +167,7 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--ru
     <dl class="parts">
       <div><dt><kbd>Tab</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd><p>Move the cursor, one visible line at a time. Moving never opens or closes anything, so the rows stay where they are.</p></dd></div>
       <div><dt>Letter keys</dt><dd><p>Every action shows its key in front of it (<code>k: Keep global</code>) and works while the pane has the keyboard.</p></dd></div>
-      <div><dt><kbd>Enter</kbd></dt><dd><p>Press what the cursor is on: a global or combo row opens right under it, its actions first and its details below them (the open row is marked <code>›</code>; Enter on it again closes it), a project row of a combo toggles it there, a button runs.</p></dd></div>
+      <div><dt><kbd>Enter</kbd></dt><dd><p>Press what the cursor is on: a global or kit row opens right under it, its actions first and its details below them (the open row is marked <code>›</code>; Enter on it again closes it), a project row of a kit toggles it there, a button runs.</p></dd></div>
       <div><dt><kbd>Esc</kbd></dt><dd><p>Hand the keyboard back to the prompt. The pane stays open and keeps updating.</p></dd></div>
       <div><dt>Back into the pane</dt><dd><p>Click it, or press <kbd>Ctrl</kbd>+<kbd>X</kbd> then <kbd>Tab</kbd>. Running <code>/scope</code> again also brings it back with the keyboard.</p></dd></div>
       <div><dt>Close</dt><dd><p>Use the pane's close mark. Nothing is lost: the data lives in the plugin, and <code>/scope</code> reopens it.</p></dd></div>
@@ -179,9 +179,9 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--ru
       <h2>Header</h2>
       <p>Always at the top, on both tabs: what was found, what is waiting on you, and the keys. The local pane puts its keys in the same row under its header; both end with what Enter does on the row under the cursor.</p>
     </div>
-    <div class="term-wrap"><pre class="term"><span class="dim">7 globals · 5 combos · usage since Jun 9</span>
+    <div class="term-wrap"><pre class="term"><span class="dim">7 globals · 5 kits · usage since Jun 9</span>
 <span class="y">▸ 4 unsorted · 1 to adopt · 3 used but off · 1 stale</span>
-<span class="pri">g</span>: <span class="b">Globals</span>  <span class="pri">c</span>: <span class="dim">Combos</span>  <span class="pri">a</span>: Back to local  <span class="pri">r</span>: Rescan  <span class="pri">s</span>: Set up shell  <span class="pri">t</span>: Let Claude triage
+<span class="pri">g</span>: <span class="b">Globals</span>  <span class="pri">i</span>: <span class="dim">Kits</span>  <span class="pri">a</span>: Back to local  <span class="pri">r</span>: Rescan  <span class="pri">s</span>: Set up shell  <span class="pri">t</span>: Let Claude triage
 <span class="y">⟳ Enabling design in ~/Projects/termkit…</span>
 <span class="r">! cc-* functions are not loaded by ~/.bashrc and ~/.bash_profile</span>
 <span class="dim">Reading your transcripts for usage history…</span></pre></div>
@@ -189,13 +189,13 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--ru
     <dl class="parts">
       <div><dt>usage since Jun 9</dt><dd><p>The oldest use scopekeeper has on record. Claude Code deletes old transcripts, so a count of 0 means unused since that date, not unused ever.</p></dd></div>
       <div><dt><span class="y">▸</span> waiting line</dt><dd>
-        <p><b>unsorted</b>: globals you haven't decided about. <b>to adopt</b>: globals a combo covers that are still installed everywhere. <b>used but off</b>: projects where you used a combo's tools but it is off. <b>stale</b>: projects where a combo sat unused past the stale limit.</p>
+        <p><b>unsorted</b>: globals you haven't decided about. <b>to adopt</b>: globals a kit covers that are still installed everywhere. <b>used but off</b>: projects where you used a kit's tools but it is off. <b>stale</b>: projects where a kit sat unused past the stale limit.</p>
         <p>When nothing waits it turns green: <span class="g">✓ Nothing waiting on you</span>. The status line repeats the unsorted and to-adopt counts.</p>
       </dd></div>
-      <div><dt><kbd>g</kbd> Globals · <kbd>c</kbd> Combos</dt><dd><p>Switch tabs. The current tab is bold and underlined.</p></dd></div>
-      <div><dt><kbd>r</kbd> Rescan</dt><dd><p>Re-read what is installed and where each combo is on. The yellow line shows while it runs. The pane also rescans by itself after every action.</p></dd></div>
+      <div><dt><kbd>g</kbd> Globals · <kbd>i</kbd> Kits</dt><dd><p>Switch tabs. The current tab is bold and underlined.</p></dd></div>
+      <div><dt><kbd>r</kbd> Rescan</dt><dd><p>Re-read what is installed and where each kit is on. The yellow line shows while it runs. The pane also rescans by itself after every action.</p></dd></div>
       <div><dt><kbd>s</kbd> Set up shell</dt><dd><p>Only shown when your shell doesn't load the <code>cc-*</code> functions yet. Asks once, then adds one line to <code>~/.zshrc</code> (zsh) or to <code>~/.bashrc</code> and the bash login file.</p></dd></div>
-      <div><dt><kbd>t</kbd> Let Claude triage</dt><dd><p>Only shown when something is unsorted. Claude works out how each unsorted item was installed, groups what belongs together, asks you about each group, and saves combos or keep-globals. Claude never installs or removes anything here; you do that from the pane.</p></dd></div>
+      <div><dt><kbd>t</kbd> Let Claude triage</dt><dd><p>Only shown when something is unsorted. Claude works out how each unsorted item was installed, groups what belongs together, asks you about each group, and saves kits or keep-globals. Claude never installs or removes anything here; you do that from the pane.</p></dd></div>
       <div><dt><kbd>a</kbd> Back to local</dt><dd><p>Closes this pane and opens the local one (<em>Scope · Local</em>). Only one of the two is open at a time.</p></dd></div>
       <div><dt><span class="r">!</span> red lines</dt><dd><p>Something to fix, such as the shell not loading <code>cc-*</code>, a shell like fish that can't, or no <code>python3</code> to read past transcripts with.</p></dd></div>
     </dl>
@@ -209,9 +209,9 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--ru
     <div class="term-wrap"><pre class="term"><span class="dim">──────────────────────────────────────────────────────────────</span>
 <span class="dim">  kind   name                    calls last  proj status</span>
 <span class="b">› </span><span class="dim">skill  </span><span class="b">improve                 </span><span class="dim">17    7d    3p   </span><span class="y">new</span>
-    <span class="pri">m</span>: Make a combo  <span class="pri">k</span>: Keep global  <span class="pri">x</span>: Remove
+    <span class="pri">m</span>: Make a kit  <span class="pri">k</span>: Keep global  <span class="pri">x</span>: Remove
 <span class="dim">    Unsorted: keep it global if you use it everywhere, or make
-    a combo so it loads only where you need it.
+    a kit so it loads only where you need it.
     ~/.claude/skills/improve</span>
     ~/Projects/mobile-app                        <span class="dim">14    7d</span>
     ~/Projects/release-tooling                   <span class="dim">2     9d</span>
@@ -231,8 +231,8 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--ru
       <div><dt>last</dt><dd><p>Time since the last use: minutes, hours, days, months, or <code>—</code> for none on record.</p></dd></div>
       <div><dt>proj</dt><dd><p>How many projects used it. A project is a repo's root folder (worktrees count as their main repo), or the folder itself outside git. Your home folder never counts.</p></dd></div>
       <div><dt>status</dt><dd>
-        <p><span class="pill warn">new</span> not decided yet: either keep it global or turn it into a combo.</p>
-        <p><span class="pill warn">→ blender</span> the combo <code>blender</code> covers it, but it is still installed globally. Adopt finishes the move.</p>
+        <p><span class="pill warn">new</span> not decided yet: either keep it global or turn it into a kit.</p>
+        <p><span class="pill warn">→ blender</span> the kit <code>blender</code> covers it, but it is still installed globally. Adopt finishes the move.</p>
         <p><span class="pill">keep</span> you chose to keep it global. These sit under <em>Kept global</em>; press <kbd>Enter</kbd> on that row to show them.</p>
       </dd></div>
     </dl>
@@ -242,23 +242,23 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--ru
     <div class="table-wrap"><table>
       <thead><tr><th>Status</th><th>Action</th><th>Key</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td>new or keep</td><td>Make a combo</td><td class="key"><kbd>m</kbd></td><td>Starts a triage with Claude for this one item.</td></tr>
+        <tr><td>new or keep</td><td>Make a kit</td><td class="key"><kbd>m</kbd></td><td>Starts a triage with Claude for this one item.</td></tr>
         <tr><td>new</td><td>Keep global</td><td class="key"><kbd>k</kbd></td><td>Marks it as intentionally global. It stops counting as unsorted.</td></tr>
         <tr><td>keep</td><td>Unkeep</td><td class="key"><kbd>u</kbd></td><td>Puts it back to unsorted.</td></tr>
-        <tr><td>→ combo</td><td>Adopt &lt;combo&gt;</td><td class="key"><kbd>o</kbd></td><td>Same as Adopt on the Combos tab (below).</td></tr>
+        <tr><td>→ kit</td><td>Adopt &lt;kit&gt;</td><td class="key"><kbd>o</kbd></td><td>Same as Adopt on the Kits tab (below).</td></tr>
         <tr><td>any</td><td>Remove</td><td class="key"><kbd>x</kbd></td><td>Takes it out of the global setup after asking, saying how much it was used and since when. Plugins and MCP servers are uninstalled; skill and agent folders are moved to <code>~/.claude/scopekeeper/backups/</code>, never deleted. Not offered until past transcripts are read, so a 0 that only means "not counted yet" can't mislead you.</td></tr>
       </tbody>
     </table></div>
     <p>The dim lines under <em>Recent</em> at the bottom are the last three things the pane did; the newest is shown whole. A question you cancelled leaves no line, as nothing changed.</p>
   </section>
 
-  <section id="combos">
+  <section id="kits">
     <div class="section-head">
-      <h2>Combos tab</h2>
-      <p>Each combo is a set of tools you turn on per project with <code>cc-&lt;name&gt;</code> and off with <code>cc-&lt;name&gt;-off</code>. This tab shows where each one is on, and what is left to do.</p>
+      <h2>Kits tab</h2>
+      <p>Each kit is a set of tools you turn on per project with <code>cc-&lt;name&gt;</code> and off with <code>cc-&lt;name&gt;-off</code>. This tab shows where each one is on, and what is left to do.</p>
     </div>
     <div class="term-wrap"><pre class="term"><span class="dim">──────────────────────────────────────────────────────────────</span>
-<span class="dim">  combo    what                               on in to do</span>
+<span class="dim">  kit    what                               on in to do</span>
   <span class="b">blender  </span><span class="dim">Blender MCP + blender-kiln         </span>2     <span class="y">adopt</span>
 <span class="b">› design   </span><span class="dim">Impeccable (skill + agents) + gen… </span>3     <span class="y">prune 1</span>
     <span class="pri">p</span>: Prune 1 stale
@@ -276,34 +276,34 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--ru
   <span class="b">vercel   </span><span class="dim">Vercel plugin (skills, agents, V… </span><span class="dim">—</span>     <span class="y">turn on 2</span></pre></div>
     <p class="caption">With <code>design</code> opened, below the header.</p>
 
-    <h3>A combo row</h3>
+    <h3>A kit row</h3>
     <dl class="parts">
-      <div><dt>combo and what</dt><dd><p>The combo and its description. The description is dropped when the pane is narrow.</p></dd></div>
-      <div><dt>on in</dt><dd><p>How many projects have every part of the combo set up; <code>—</code> for none.</p></dd></div>
+      <div><dt>kit and what</dt><dd><p>The kit and its description. The description is dropped when the pane is narrow.</p></dd></div>
+      <div><dt>on in</dt><dd><p>How many projects have every part of the kit set up; <code>—</code> for none.</p></dd></div>
       <div><dt>to do</dt><dd>
         <p><span class="pill warn">adopt</span> some part is still installed globally. Adopt removes it once the projects have it.</p>
-        <p><span class="pill warn">turn on 2</span> projects where you used these tools but the combo is off. Adopt, or Enter on each project, turns it on there.</p>
+        <p><span class="pill warn">turn on 2</span> projects where you used these tools but the kit is off. Adopt, or Enter on each project, turns it on there.</p>
         <p><span class="pill warn">prune 1</span> projects where it went unused past the stale limit. Prune takes it out of them.</p>
       </dd></div>
     </dl>
 
-    <h3>The open combo</h3>
-    <p><kbd>Enter</kbd> on a combo opens its details under it, and closes them again: every part it installs (a command it runs is shown in full), its two shell commands, what is left to do, one row per project (newest use first), then its actions. A key acts on the open combo.</p>
+    <h3>The open kit</h3>
+    <p><kbd>Enter</kbd> on a kit opens its details under it, and closes them again: every part it installs (a command it runs is shown in full), its two shell commands, what is left to do, one row per project (newest use first), then its actions. A key acts on the open kit.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Mark</th><th>Tag</th><th>Meaning</th><th>Enter on the row</th></tr></thead>
       <tbody>
         <tr><td><span style="color:var(--term-green)">✓</span></td><td></td><td>Every part is set up in this project.</td><td>Asks, then turns it off there.</td></tr>
-        <tr><td><span style="color:var(--term-green)">✓</span></td><td><span class="pill warn">stale</span></td><td>On, but neither used nor enabled there for 30 days or more (change the number in <code>/config</code>). A combo you just enabled counts from the day you enabled it.</td><td>Asks, then turns it off there.</td></tr>
+        <tr><td><span style="color:var(--term-green)">✓</span></td><td><span class="pill warn">stale</span></td><td>On, but neither used nor enabled there for 30 days or more (change the number in <code>/config</code>). A kit you just enabled counts from the day you enabled it.</td><td>Asks, then turns it off there.</td></tr>
         <tr><td><span style="color:var(--term-yellow)">◐</span></td><td><span class="pill warn">partial</span></td><td>Some parts are set up, some aren't (say, the plugin but not the MCP server).</td><td>Asks, saying what it installs, then turns it on, which completes it.</td></tr>
-        <tr><td><span style="color:var(--term-yellow)">+</span></td><td><span class="pill warn">used, off</span></td><td>You used these tools there, but the combo is off.</td><td>Asks, saying what it installs, then turns it on there.</td></tr>
+        <tr><td><span style="color:var(--term-yellow)">+</span></td><td><span class="pill warn">used, off</span></td><td>You used these tools there, but the kit is off.</td><td>Asks, saying what it installs, then turns it on there.</td></tr>
       </tbody>
     </table></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Action</th><th>Key</th><th>Shown when</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td>Adopt</td><td class="key"><kbd>o</kbd></td><td>Some part is still global, or a project shows <em>used, off</em>.</td><td>Turns the combo on in every <em>used, off</em> project, checks each one worked, then removes the global installs (after a backup). If any project fails, it stops there and keeps the globals. You can also pick <em>Only enable</em> to skip the removal.</td></tr>
-        <tr><td>Enable here</td><td class="key"><kbd>e</kbd></td><td>This session's project is known to scopekeeper and the combo isn't fully on there.</td><td>Asks, saying what it installs, then turns the combo on in the project you started Claude in.</td></tr>
-        <tr><td>Prune N stale</td><td class="key"><kbd>p</kbd></td><td>A project shows <em>stale</em>.</td><td>Asks once, listing the projects, then turns the combo off in each.</td></tr>
+        <tr><td>Adopt</td><td class="key"><kbd>o</kbd></td><td>Some part is still global, or a project shows <em>used, off</em>.</td><td>Turns the kit on in every <em>used, off</em> project, checks each one worked, then removes the global installs (after a backup). If any project fails, it stops there and keeps the globals. You can also pick <em>Only enable</em> to skip the removal.</td></tr>
+        <tr><td>Enable here</td><td class="key"><kbd>e</kbd></td><td>This session's project is known to scopekeeper and the kit isn't fully on there.</td><td>Asks, saying what it installs, then turns the kit on in the project you started Claude in.</td></tr>
+        <tr><td>Prune N stale</td><td class="key"><kbd>p</kbd></td><td>A project shows <em>stale</em>.</td><td>Asks once, listing the projects, then turns the kit off in each.</td></tr>
       </tbody>
     </table></div>
     <div class="note"><strong>vercel shows turn on 2.</strong> You used it in web-app and internal-scripts, and it is no longer installed globally, so it is on nowhere. Adopt turns it back on in both projects; leave it if you don't want that.</div>
@@ -316,7 +316,7 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--ru
       <p>Anything that installs, uninstalls, moves files or edits a shell file asks first, in Claude's question dialog.</p>
     </div>
     <ol class="flow">
-      <li>The question says exactly what will happen: the project paths, the installs it would remove, and what enabling a combo installs and runs.</li>
+      <li>The question says exactly what will happen: the project paths, the installs it would remove, and what enabling a kit installs and runs.</li>
       <li>Pick an answer with the arrow keys or its number, then <kbd>Enter</kbd>.</li>
       <li><kbd>Esc</kbd> on the dialog counts as cancel. Nothing changes.</li>
       <li>The result appears as a short notice, and in the pane: under <em>Recent</em> in the advanced pane, as <em>Last:</em> in the local one. Cancelling only shows the notice.</li>
@@ -332,21 +332,21 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--ru
       <thead><tr><th>Key</th><th>Where</th><th>Action</th></tr></thead>
       <tbody>
         <tr><td class="key"><kbd>g</kbd></td><td>anywhere</td><td>Globals tab</td></tr>
-        <tr><td class="key"><kbd>c</kbd></td><td>anywhere</td><td>Combos tab</td></tr>
+        <tr><td class="key"><kbd>i</kbd></td><td>anywhere</td><td>Kits tab</td></tr>
         <tr><td class="key"><kbd>r</kbd></td><td>anywhere</td><td>Rescan</td></tr>
         <tr><td class="key"><kbd>t</kbd></td><td>when something is unsorted</td><td>Let Claude triage</td></tr>
         <tr><td class="key"><kbd>s</kbd></td><td>when the shell isn't set up</td><td>Set up shell</td></tr>
         <tr><td class="key"><kbd>k</kbd></td><td>unsorted item</td><td>Keep global</td></tr>
         <tr><td class="key"><kbd>u</kbd></td><td>keep-global</td><td>Unkeep</td></tr>
-        <tr><td class="key"><kbd>m</kbd></td><td>item not in a combo</td><td>Make a combo with Claude</td></tr>
+        <tr><td class="key"><kbd>m</kbd></td><td>item not in a kit</td><td>Make a kit with Claude</td></tr>
         <tr><td class="key"><kbd>x</kbd></td><td>item, once usage is read</td><td>Remove global</td></tr>
-        <tr><td class="key"><kbd>o</kbd></td><td>combo, or item a combo covers</td><td>Adopt</td></tr>
+        <tr><td class="key"><kbd>o</kbd></td><td>kit, or item a kit covers</td><td>Adopt</td></tr>
         <tr><td class="key"><kbd>a</kbd></td><td>anywhere</td><td>Back to the local pane</td></tr>
         <tr><td class="key"><kbd>h</kbd></td><td>anywhere</td><td>Hide the help box (its key sits in the box's top border), or bring it back with <code>h: Help</code> in the keys row. Each tab's help shows until you hide it, then stays hidden.</td></tr>
-        <tr><td class="key"><kbd>e</kbd></td><td>combo</td><td>Enable here</td></tr>
-        <tr><td class="key"><kbd>p</kbd></td><td>combo with stale projects</td><td>Prune stale</td></tr>
+        <tr><td class="key"><kbd>e</kbd></td><td>kit</td><td>Enable here</td></tr>
+        <tr><td class="key"><kbd>p</kbd></td><td>kit with stale projects</td><td>Prune stale</td></tr>
         <tr><td class="key"><kbd>Tab</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>anywhere</td><td>Move the cursor one line</td></tr>
-        <tr><td class="key"><kbd>Enter</kbd></td><td>row or button</td><td>Open or close a global or combo, toggle a project, show kept globals, or press a button</td></tr>
+        <tr><td class="key"><kbd>Enter</kbd></td><td>row or button</td><td>Open or close a global or kit, toggle a project, show kept globals, or press a button</td></tr>
         <tr><td class="key"><kbd>Esc</kbd></td><td>anywhere</td><td>Back to the prompt</td></tr>
       </tbody>
     </table></div>
@@ -361,16 +361,16 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--ru
       <thead><tr><th>Command</th><th>Does</th></tr></thead>
       <tbody>
         <tr><td class="key"><code>/scope</code></td><td>Opens the pane (or brings it back with the keyboard).</td></tr>
-        <tr><td class="key"><code>/scope audit</code></td><td>Prints the overview as text: what is waiting on you, every global with its usage, every combo with where it's on, off or stale.</td></tr>
+        <tr><td class="key"><code>/scope audit</code></td><td>Prints the overview as text: what is waiting on you, every global with its usage, every kit with where it's on, off or stale.</td></tr>
         <tr><td class="key"><code>/scope triage</code></td><td>Same as the Triage key.</td></tr>
-        <tr><td class="key"><code>/scope adopt design</code></td><td>Adopt a combo by name.</td></tr>
-        <tr><td class="key"><code>/scope enable design</code></td><td>Turn a combo on in this session's project.</td></tr>
-        <tr><td class="key"><code>/scope off design</code></td><td>Turn a combo off in this session's project.</td></tr>
+        <tr><td class="key"><code>/scope adopt design</code></td><td>Adopt a kit by name.</td></tr>
+        <tr><td class="key"><code>/scope enable design</code></td><td>Turn a kit on in this session's project.</td></tr>
+        <tr><td class="key"><code>/scope off design</code></td><td>Turn a kit off in this session's project.</td></tr>
         <tr><td class="key"><code>/scope backfill</code></td><td>Re-read usage from your transcripts.</td></tr>
-        <tr><td class="key"><code>cc-design</code></td><td>From a shell in a project folder: turn the combo on there. <code>cc-design-off</code> turns it off.</td></tr>
+        <tr><td class="key"><code>cc-design</code></td><td>From a shell in a project folder: turn the kit on there. <code>cc-design-off</code> turns it off.</td></tr>
       </tbody>
     </table></div>
   </section>
 
-  <footer>scopekeeper 0.2.0 · combos live in <code>~/.claude/scopekeeper/combos.json</code>, the shell functions in <code>~/.claude/scopekeeper/cc.sh</code>.</footer>
+  <footer>scopekeeper 0.5.0 · kits live in <code>~/.claude/scopekeeper/kits.json</code>, the shell functions in <code>~/.claude/scopekeeper/cc.sh</code>.</footer>
 </div>
