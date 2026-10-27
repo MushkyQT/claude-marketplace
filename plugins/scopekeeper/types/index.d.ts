@@ -23,6 +23,8 @@ export type KitProject = {
   last: number
   /** When scopekeeper enabled it there, or first saw it on with no use since; 0 if unknown. */
   since: number
+  /** When partly on: the parts that are off, as `partSummary` names them. */
+  off?: string[]
 }
 
 export type KitRow = {

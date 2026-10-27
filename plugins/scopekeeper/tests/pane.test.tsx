@@ -384,6 +384,39 @@ test('the band lights this project\'s kits in color', async ($, on) => {
   }
 })
 
+test('a light with something to say shows it on hover, after the lights', async ($, on) => {
+  seed(on, SNAP)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  // find leaves hover out of props: the drawn tree carries it.
+  type Node = { type?: string; props?: { key?: unknown }; hover?: unknown; children?: unknown[] }
+  const all = (n: unknown): Node[] => (n && typeof n === 'object' ? [n as Node, ...((n as Node).children ?? []).flatMap(all)] : [])
+  const drawn = all(await ui.drawn())
+  const at = (key: string) => drawn.find(n => n.props?.key === key)
+  expect(at('light:video')?.hover).toEqual({ scope: 'light:video' })
+  expect(at('info:video')?.hover).toEqual({ scope: 'light:video', display: 'flex' })
+  const card = await ui.find({ key: 'info:video' })
+  expect(card?.props.display).toBe('none')
+  expect(card?.text).toBe('  video: off · used 6× here, last 3d ago')
+  // design is on and in use here: nothing to add.
+  expect(at('light:design')?.hover).toBe(undefined)
+  expect(at('info:design')).toBe(undefined)
+  await ui.unmount()
+})
+
+test('an idle kit\'s light is dimmed, one off is not', async ($, on) => {
+  const kits = SNAP.kits.map(k => (k.name !== 'design' ? k : {
+    ...k, projects: k.projects.map(pr => (pr.project === '/w/app' ? { ...pr, last: NOW - 40 * DAY } : pr)),
+  }))
+  seed(on, { ...SNAP, kits })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const dims = async (key: string) => (await ui.find({ key }))?.children
+    .flatMap(c => (typeof c === 'string' ? [] : [(c as { props?: { dimColor?: boolean } }).props?.dimColor]))
+  expect(await dims('light:design')).toEqual([true, true])
+  expect(await dims('light:video')).toEqual([undefined, undefined])
+  expect((await ui.find({ type: 'Text', text: '●' }))?.props.color).toBe('green')
+  await ui.unmount()
+})
+
 test('a light in the band toggles its kit here, after one question', async ($, on) => {
   seed(on, SNAP)
   const asked: unknown[] = []

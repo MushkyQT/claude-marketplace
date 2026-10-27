@@ -396,6 +396,7 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
         n: use?.n ?? 0,
         last: use?.last ?? 0,
         since: onSince[key] ?? 0,
+        ...(on > 0 && on < states.length ? { off: kit.parts.filter((_, i) => !states[i]).map(partSummary) } : {}),
       })
     }
     projects.sort((a, b) => b.last - a.last)
@@ -974,10 +975,13 @@ export const register: Register = (on, options) => {
   // Drawn here rather than with $.ui.status, which Claude Code shows as a yellow warning with our name before it.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const snap = await read($, snapshot)
-    const b = snap && !e.props.hasSurvey ? band(snap) : undefined
+    const b = snap && !e.props.hasSurvey ? band(snap, opts.staleDays) : undefined
     if (!b || !snap) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     const tone = { '●': 'green', '◐': 'yellow', '○': 'yellow' } as const
+    // A light with something to say joins a hover group, whose card shows in the room after the lights.
+    const room = e.props.bodyColumns - b.lights.reduce((w, l, i) => w + (i ? 2 : 0) + 2 + l.name.length, 0)
+      - (b.more > 0 ? `  +${b.more}`.length : 0) - 2
     // A light toggles its kit in this project, after the same question as Enter in the pane.
     // No hotkeys: a bare digit in an empty prompt would press them.
     const toggle = (name: string) => () => {
@@ -990,12 +994,18 @@ export const register: Register = (on, options) => {
       <Box>
         {b.lights.flatMap((l, i) => [
           i ? <Text>{'  '}</Text> : null,
-          <Button key={`light:${l.name}`} plain onPress={toggle(l.name)}>
-            <Text color={tone[l.glyph]}>{l.glyph}</Text>
-            <Text> {l.name}</Text>
+          <Button key={`light:${l.name}`} plain onPress={toggle(l.name)} hover={l.info ? { scope: `light:${l.name}` } : undefined}>
+            {/* An idle kit is on but fading: dim, so it reads apart from one in use. */}
+            <Text color={tone[l.glyph]} dimColor={l.isIdle || undefined}>{l.glyph}</Text>
+            <Text dimColor={l.isIdle || undefined}> {l.name}</Text>
           </Button>,
         ])}
         {b.more > 0 && <Text dimColor>  +{b.more}</Text>}
+        {room > 8 && b.lights.filter(l => l.info).map(l => (
+          <Box key={`info:${l.name}`} display="none" hover={{ scope: `light:${l.name}`, display: 'flex' }}>
+            <Text dimColor>{'  '}{clip(`${l.name}: ${l.info}`, room)}</Text>
+          </Box>
+        ))}
       </Box>
     )
   })

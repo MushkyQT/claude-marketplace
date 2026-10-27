@@ -1,6 +1,6 @@
 // Pure logic: no `$`, so the tests can import it directly.
 
-import type { Bundle, ItemRow, ProjectUse, Snapshot } from '../types'
+import type { Bundle, ItemRow, KitProject, ProjectUse, Snapshot } from '../types'
 
 export type Part =
   | { kind: 'plugin'; id: string }
@@ -443,20 +443,34 @@ export const isStale = (p: { status: string; last: number; since: number }, now:
 
 const LIGHTS = 4
 
-export type Light = { glyph: '●' | '◐' | '○'; name: string }
+/** `info` is what hovering the light tells: empty for a kit on and in use. `isIdle`: on, unused for staleDays. */
+export type Light = { glyph: '●' | '◐' | '○'; name: string; info: string; isIdle: boolean }
 
 /** The band's parts: this project's kits as lights, and how many more there are. */
 export type Band = { lights: Light[]; more: number }
 
+/** What a light adds on hover, in a few words: what is off, or how long it sat unused. */
+export function lightInfo(pr: KitProject, now: number, staleDays: number): string {
+  const used = pr.n > 0 ? `used ${count(pr.n)}× here, last ${ago(pr.last, now)} ago` : ''
+  if (pr.status === 'on') return isStale(pr, now, staleDays) ? `on, unused for ${ago(Math.max(pr.last, pr.since), now)}` : ''
+  if (pr.status === 'off') return ['off', used].filter(Boolean).join(' · ')
+  return [pr.off?.length ? `missing ${pr.off.join(', ')}` : 'partly on', used].filter(Boolean).join(' · ')
+}
+
 /** This project's kits as lights: ● on, ◐ partly on, ○ used here but off. Undefined when none are. */
-export function band(snap: Snapshot): Band | undefined {
+export function band(snap: Snapshot, staleDays = 30): Band | undefined {
   const here = snap.kits.flatMap(c => {
     const pr = c.projects.find(p => p.project === snap.cwdProject)
-    return pr ? [{ name: c.name, glyph: (pr.status === 'on' ? '●' : pr.status === 'partial' ? '◐' : '○') as Light['glyph'] }] : []
+    return pr ? [{
+      name: c.name,
+      glyph: (pr.status === 'on' ? '●' : pr.status === 'partial' ? '◐' : '○') as Light['glyph'],
+      info: lightInfo(pr, snap.scannedAt, staleDays),
+      isIdle: isStale(pr, snap.scannedAt, staleDays),
+    }] : []
   })
   if (!here.length) return undefined
-  // Past the cap, the kits not fully on stay; the rest keep their alphabetical place.
-  const shown = new Set([...here.filter(k => k.glyph !== '●'), ...here].slice(0, LIGHTS))
+  // Past the cap, the kits not fully on stay, then the idle ones; the rest keep their alphabetical place.
+  const shown = new Set([...here.filter(k => k.glyph !== '●'), ...here.filter(k => k.isIdle), ...here].slice(0, LIGHTS))
   return { lights: here.filter(k => shown.has(k)), more: Math.max(0, here.length - LIGHTS) }
 }
 

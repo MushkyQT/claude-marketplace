@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { DAY, ago, claimOf, classify, clip, coUse, kitUsage, day, family, generateScript, isStale, partLine, partUsage, q, rcLineFor, rcPlan, bandText, suggest, validateKit } from '../hooks/core'
+import { DAY, ago, band, claimOf, classify, clip, coUse, kitUsage, day, family, generateScript, isStale, lightInfo, partLine, partUsage, q, rcLineFor, rcPlan, bandText, suggest, validateKit } from '../hooks/core'
 import type { ItemRow, KitProject, KitRow, Snapshot } from '../types'
 import type { Registry } from '../hooks/core'
 
@@ -183,4 +183,20 @@ test('the band lights this project\'s kits: on, partly on, or used here but off'
   // Past four lights, the kits not fully on stay.
   const many = ['a', 'b', 'c', 'd', 'e'].map(n => kit(n, 'on', 1, now - DAY)).concat(kit('z', 'off', 1, now - DAY))
   expect(bandText(snap(many))).toBe('● a  ● b  ● c  ○ z  +2')
+  // An idle kit stays too, ahead of the ones in use.
+  const idle = many.concat(kit('y', 'on', 1, now - 40 * DAY))
+  expect(bandText(snap(idle))).toBe('● a  ● b  ○ z  ● y  +3')
+  expect(band(snap(idle))?.lights.find(l => l.name === 'y')?.isIdle).toBe(true)
+})
+
+test('hovering a light tells what is off, or how long it sat unused; nothing for a kit on and in use', () => {
+  const now = 100 * DAY
+  const pr = (status: KitProject['status'], n: number, last: number, extra: Partial<KitProject> = {}): KitProject =>
+    ({ project: '/a', status, n, last, since: 0, ...extra })
+  expect(lightInfo(pr('on', 4, now - DAY), now, 30)).toBe('')
+  expect(lightInfo(pr('on', 1, now - 34 * DAY), now, 30)).toBe('on, unused for 34d')
+  expect(lightInfo(pr('off', 1200, now - 3 * DAY), now, 30)).toBe('off · used 1.2k× here, last 3d ago')
+  expect(lightInfo(pr('partial', 546, now - 10 * DAY, { off: ['blender-kiln'] }), now, 30)).toBe('missing blender-kiln · used 546× here, last 10d ago')
+  // A snapshot from before parts were recorded still says something.
+  expect(lightInfo(pr('partial', 0, 0), now, 30)).toBe('partly on')
 })
