@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { AskOptions, EngineInterface, Register, RenderInput } from 'claude-code'
 
-import type { Bundle, KitProject, KitRow, GlobalItem, ItemRow, Snapshot, View } from '../types'
+import type { Bundle, KitProject, KitRow, GlobalItem, ItemRow, Mode, Snapshot, View } from '../types'
 import {
   addUse, ago, claimOf, classify, clip, coUse, kitUsage, count, day, fit, generateScript, invalidKits,
   isStale, kitsContext, matchesAny, mcpServerOf, mergeLedger, mergeSessions, partLine, partSummary, plural,
@@ -11,10 +11,14 @@ import type { Kit, Ledger, Part, Registry, Sessions, UsageEvent } from './core'
 
 type $T = EngineInterface
 
-/** The daily pane: this project's kits, and what to split out of the global scope. */
+/**
+ * The one pane, in one of two modes: local (this project's kits, and what to split out of the global
+ * scope) or advanced (every global install and every kit, across all projects).
+ */
 const PANE = 'scopekeeper'
-/** Every global install and every kit, across all projects. */
-const ADVANCED = 'scopekeeper-advanced'
+/** Advanced mode's own pane before 1.0.2: closed when /scope opens the pane. */
+const LEGACY_ADVANCED = 'scopekeeper-advanced'
+const mode = atom({ plugin: 'scopekeeper', key: 'mode' } as const, 'local')
 const snapshot = atom({ plugin: 'scopekeeper', key: 'snapshot' } as const, null, { shape: 'snap-4' })
 const view = atom({ plugin: 'scopekeeper', key: 'view' } as const, { tab: 'globals', selected: '', showKept: false }, { shape: 'view-3' })
 const pick = atom({ plugin: 'scopekeeper', key: 'pick' } as const, '')
@@ -147,12 +151,10 @@ const listFiles = (files: string[], home: string) => files.map(f => shortPath(f,
 async function ensureRc($: $T, p: Paths): Promise<boolean> {
   const missing = await rcMissing($, p)
   if (!missing.length) return true
-  const answer = await $.ui
-    .ask(`Add one line to ${listFiles(missing, p.home)} so the cc-* functions load in new shells?`, {
-      header: 'Shell',
-      options: ['Add it', 'Not now'],
-    })
-    .catch(() => 'Not now')
+  const answer = await ask($, `Add one line to ${listFiles(missing, p.home)} so the cc-* functions load in new shells?`, {
+    header: 'Shell',
+    options: ['Add it', 'Not now'],
+  }).catch(() => 'Not now')
   if (answer !== 'Add it') return false
   for (const file of missing) {
     const text = await $.fs.read(file).catch(() => '')
@@ -664,8 +666,7 @@ async function adopt($: $T, opts: Opts, name: string, answer?: 'Adopt' | 'Only e
   ].filter(Boolean)
   if (!plan.length) return `${name} is already per-project everywhere it was used.`
   const installs = targets.length ? ` In each project it installs: ${installList(row)}.` : ''
-  answer ??= await $.ui
-    .ask(`Adopt ${name}: ${plan.join(', then ')}?${installs}`, { header: 'Adopt', options: ['Adopt', 'Only enable', 'Cancel'] })
+  answer ??= await ask($, `Adopt ${name}: ${plan.join(', then ')}?${installs}`, { header: 'Adopt', options: ['Adopt', 'Only enable', 'Cancel'] })
     .then(a => (a === 'Adopt' || a === 'Only enable' ? a : undefined))
     .catch(() => undefined)
   if (!answer) return `Adopting ${name} cancelled.`
@@ -728,8 +729,7 @@ async function removeOne($: $T, opts: Opts, id: string): Promise<string> {
   const where = item.uses.length
     ? ` It was used in ${plural(item.uses.length, 'project')}${since}; no kit will bring it back.`
     : ` No recorded use${since}.`
-  const answer = await $.ui
-    .ask(`Remove ${item.kind} ${item.name} from your global setup?${where}`, { header: 'Remove', options: ['Remove', 'Cancel'] })
+  const answer = await ask($, `Remove ${item.kind} ${item.name} from your global setup?${where}`, { header: 'Remove', options: ['Remove', 'Cancel'] })
     .catch(() => 'Cancel')
   if (answer !== 'Remove') return `Kept ${item.name}.`
   const backup = await backupDir($, p)
@@ -746,8 +746,7 @@ async function toggleKit($: $T, opts: Opts, row: KitRow, project: string, off: b
   const question = off
     ? `Remove ${row.name} from ${where}?`
     : `Enable ${row.name} in ${where}? It installs: ${installList(row)}.`
-  const answer = await $.ui
-    .ask(question, { header: 'Kit', options: [off ? 'Remove' : 'Enable', 'Cancel'] })
+  const answer = await ask($, question, { header: 'Kit', options: [off ? 'Remove' : 'Enable', 'Cancel'] })
     .catch(() => 'Cancel')
   return answer === 'Remove' || answer === 'Enable' ? enable($, opts, row.name, project, off) : 'Cancelled.'
 }
@@ -756,8 +755,7 @@ async function toggleKit($: $T, opts: Opts, row: KitRow, project: string, off: b
 async function turnOnUsed($: $T, opts: Opts, rows: KitRow[], project: string, home: string): Promise<string> {
   const where = shortPath(project, home)
   const names = rows.map(r => r.name).join(', ')
-  const answer = await $.ui
-    .ask(`Enable ${names} in ${where}? It installs: ${rows.map(installList).join('; ')}.`, { header: 'Kit', options: ['Enable', 'Cancel'] })
+  const answer = await ask($, `Enable ${names} in ${where}? It installs: ${rows.map(installList).join('; ')}.`, { header: 'Kit', options: ['Enable', 'Cancel'] })
     .catch(() => 'Cancel')
   if (answer !== 'Enable') return 'Cancelled.'
   const failed: string[] = []
@@ -780,8 +778,7 @@ async function prune($: $T, opts: Opts, name: string): Promise<string> {
   const now = await $.clock.now()
   const stale = row.projects.filter(pr => isStale(pr, now, opts.staleDays)).map(pr => pr.project)
   if (!stale.length) return `${name} is not stale anywhere.`
-  const answer = await $.ui
-    .ask(`Remove ${name} from ${plural(stale.length, 'project')} where it went unused for ${opts.staleDays}+ days (${stale.map(s => shortPath(s, p.home)).join(', ')})?`,
+  const answer = await ask($, `Remove ${name} from ${plural(stale.length, 'project')} where it went unused for ${opts.staleDays}+ days (${stale.map(s => shortPath(s, p.home)).join(', ')})?`,
       { header: 'Prune', options: ['Remove', 'Cancel'] })
     .catch(() => 'Cancel')
   if (answer !== 'Remove') return 'Cancelled.'
@@ -814,8 +811,7 @@ async function makeLocal($: $T, opts: Opts, bundle: Bundle, items: ItemRow[]): P
   let name = bundle.name
   for (let n = 2; reg.kits[name]; n++) name = `${bundle.name}-${n}`
   const where = bundle.projects.map(pr => shortPath(pr.project, p.home))
-  const answer = await $.ui
-    .ask(`Make ${members.map(m => m.name).join(', ')} local as cc-${name}? It turns ${members.length > 1 ? 'them' : 'it'} on in ${where.join(', ')}, then removes the global install${members.length > 1 ? 's' : ''} (backed up first).`,
+  const answer = await ask($, `Make ${members.map(m => m.name).join(', ')} local as cc-${name}? It turns ${members.length > 1 ? 'them' : 'it'} on in ${where.join(', ')}, then removes the global install${members.length > 1 ? 's' : ''} (backed up first).`,
       { header: 'Make local', options: ['Make local', 'Only enable', 'Cancel'] })
     .catch(() => 'Cancel')
   if (answer !== 'Make local' && answer !== 'Only enable') return 'Cancelled.'
@@ -935,13 +931,31 @@ async function toggleHelp($: $T, which: HelpView): Promise<void> {
   await $.store.set('helpHidden', await read($, helpHidden))
 }
 
-const openAdvanced = ($: $T) => $.ui.open({ id: ADVANCED, title: 'Scope · all projects', focus: true, columns: 64 })
-const openLocal = ($: $T) => $.ui.open({ id: PANE, title: 'Scope · Local', focus: true, columns: 56 })
+const openPane = ($: $T, m: Mode) => $.ui.open(m === 'advanced'
+  ? { id: PANE, title: 'Scope · all projects', focus: true, columns: 64 }
+  : { id: PANE, title: 'Scope · Local', focus: true, columns: 56 })
 
-/** One mode at a time: the open pane holds the keys and would refuse the other's focus, so it closes first. */
-async function switchMode($: $T, to: 'local' | 'advanced') {
-  await $.ui.close({ id: to === 'advanced' ? PANE : ADVANCED })
-  return to === 'advanced' ? openAdvanced($) : openLocal($)
+/**
+ * Both modes draw in the one pane, so a switch redraws it in place and it keeps its seat and the keys.
+ * As two panes, the open that followed the close was not the person's: a terminal too narrow to dock
+ * left the new one unseated, and its hotkeys were typed into the prompt.
+ */
+async function switchMode($: $T, to: Mode) {
+  await update($, mode, () => to)
+  return openPane($, to)
+}
+
+/**
+ * $.ui.ask, then the keys back to the pane if it held them: the question takes the keyboard, and once
+ * answered it goes to the prompt, where the pane's next hotkey would be typed.
+ */
+async function ask($: $T, question: string, options: AskOptions): Promise<string> {
+  const held = (await $.ui.panes().catch(() => [])).some(pane => pane.id === PANE && pane.isFocused)
+  try {
+    return await $.ui.ask(question, options)
+  } finally {
+    if (held) await openPane($, await read($, mode)).catch(() => undefined)
+  }
 }
 
 async function setView($: $T, next: Partial<View>): Promise<void> {
@@ -963,6 +977,468 @@ const PART_SCHEMA = {
     { properties: { kind: { const: 'git-skills' }, repo: { type: 'string', description: 'git URL' }, dir: { type: 'string', description: 'folder of skills in the repo, default "skills"' }, match: { type: 'string', description: 'glob of skill folder names, e.g. "remotion-*"' }, lib: { type: 'string' } }, required: ['kind', 'repo', 'match'] },
     { properties: { kind: { const: 'installer' }, run: { type: 'string', description: 'shell command run in the project; must install for Claude Code only, without hooks' }, paths: { type: 'array', items: { type: 'string' }, description: 'project-relative paths it writes (globs allowed), kept out of git and removed by cc-<name>-off' }, usage: { type: 'array', items: { type: 'string' } } }, required: ['kind', 'run', 'paths'] },
   ],
+}
+
+/** Local mode: this project's kits, and what to split out of the global scope. */
+async function drawLocal($: $T, e: RenderInput<'Pane'>, opts: Opts) {
+  const ui = $.ui.resolve(e)
+  const { Box, Text, Button } = ui
+  const snap = await read($, snapshot)
+  const sel = await read($, pick)
+  const openKey = await read($, opened)
+  const showHelp = !(await read($, helpHidden)).includes('local')
+  const doing = await read($, busy)
+  const lines = await read($, log)
+  const W = Math.max(30, e.props.bodyColumns)
+  if (!snap) return <Text dimColor>Scanning your setup…</Text>
+
+  const home = snap.home
+  const here = snap.cwdProject
+  const loading = !snap.backfilledAt
+  const run = (label: string, work: () => Promise<string>) => () => act($, opts, label, work).then(() => undefined)
+  const nameOf = (id: string) => snap.items.find(i => i.id === id)?.name ?? id
+  const kept = snap.items.filter(i => i.claim === 'keep').length
+  // Kits used here but off come first: they are the ones waiting on a decision.
+  const hereKits = here ? [...snap.kits].sort((a, b) => Number(usedOffHere(b, here)) - Number(usedOffHere(a, here))) : []
+  const usedOff = hereKits.filter(c => usedOffHere(c, here))
+
+  // Rows in order: this project's kits, the bundles to make local, then what to keep global.
+  const keys = [
+    ...hereKits.map(c => `here:${c.name}`),
+    ...snap.bundles.map(b => `sug:${b.id}`),
+    ...(snap.everywhere.length ? ['sug:everywhere'] : []),
+  ]
+  const cur = keys.includes(sel) ? sel : (keys[0] ?? '')
+  // Enter opens a suggestion, and on the open one closes it again.
+  const sugKeys = keys.filter(k => k.startsWith('sug:'))
+  const open = sugKeys.includes(openKey) ? openKey : ''
+  const openRow = (key: string) => () => update($, opened, o => (o === key ? '' : key))
+  const first = (key: string) => (key === keys[0] ? true : undefined)
+  const action = (hotkey: string, id: string, label: string, onPress: () => unknown) => (
+    <Button key={`act-${id}`} hotkey={hotkey} plain dimColor={doing !== ''} onPress={onPress}>{label}</Button>
+  )
+  const heading = (text: string) => <Text bold>{text}</Text>
+
+  // ---- this project: each kit, ● on or ○ off, Enter to toggle; the last cell only for what needs a look
+  const nameW = Math.min(16, Math.max(8, ...snap.kits.map(c => c.name.length + 1)))
+  const stateW = 12
+  const sumW = Math.max(0, W - 4 - nameW - stateW)
+  const hereRow = (c: KitRow) => {
+    const key = `here:${c.name}`
+    const pr = statusIn(c, here)
+    const isOn = pr?.status === 'on'
+    const isUsedOff = usedOffHere(c, here)
+    const mark = isOn ? '●' : pr?.status === 'partial' ? '◐' : '○'
+    const state = isOn ? (isStale(pr!, snap.scannedAt, opts.staleDays) ? 'idle' : '')
+      : isUsedOff ? `used ${ago(pr!.last, snap.scannedAt)} ago` : pr?.status === 'partial' ? 'partial' : ''
+    return [
+      <Button key={key} plain autoFocus={first(key)}
+        onPress={run(`${isOn ? 'Turning off' : 'Turning on'} ${c.name}…`, () => toggleKit($, opts, c, here, isOn, home))}>
+        <Text>{'  '}</Text>
+        <Text color={isOn ? 'green' : isUsedOff || pr?.status === 'partial' ? 'yellow' : undefined} dimColor={!pr}>{mark} </Text>
+        <Text>{fit(c.name, nameW)}</Text>
+        <Text dimColor>{fit(c.summary, sumW)}</Text>
+        <Text color="yellow">{clip(state, stateW)}</Text>
+      </Button>,
+      c.globals.length ? (
+        <Box key={`detail:${key}`} flexDirection="column" paddingLeft={4}>
+          <Text dimColor wrap="truncate-end">Still global too: {c.globals.map(nameOf).join(', ')}</Text>
+        </Box>
+      ) : null,
+    ]
+  }
+
+  // ---- bundles to split out of the global scope
+  const sugRow = (b: Bundle) => {
+    const key = `sug:${b.id}`
+    const isHere = b.projects.some(pr => pr.project === here)
+    const label = b.ids.length === 1 ? nameOf(b.ids[0]!) : `${b.name} (${b.ids.length})`
+    return [
+      <Button key={key} plain autoFocus={first(key)} onPress={openRow(key)}>
+        <Text bold>{open === key ? '› ' : '  '}</Text>
+        <Text color="yellow">◆ </Text>
+        <Text bold={open === key}>{fit(label, Math.min(24, Math.max(10, W - 30)))}</Text>
+        <Text dimColor>{clip(`${b.why}${isHere ? ' · here' : ''}`, Math.max(0, W - 4 - Math.min(24, Math.max(10, W - 30))))}</Text>
+      </Button>,
+      open === key ? (
+        // The actions first, so a long list of projects never pushes them out of view; then one project a line.
+        <Box key={`detail:${key}`} flexDirection="column" paddingLeft={4}>
+          <Box flexDirection="row" columnGap={2} flexWrap="wrap">
+            {action('l', 'local', b.direct ? 'Make local' : 'Make local with Claude',
+              run(`Making ${b.name} local…`, () => makeLocal($, opts, b, snap.items)))}
+            {action('k', 'keep', 'Keep global', run('Saving…', () => keepGlobal($, opts, b.ids, true)))}
+          </Box>
+          {b.ids.length > 1 && <Text>{b.ids.map(nameOf).join(', ')}</Text>}
+          <Text dimColor>Used in:</Text>
+          {b.projects.slice(0, 5).map(pr => (
+            <Text bold={pr.project === here}>
+              {'  '}{fit(shortPath(pr.project, home), W - 18)}<Text dimColor>{fit(count(pr.n), 6)}{ago(pr.last, snap.scannedAt)}</Text>
+            </Text>
+          ))}
+          {b.projects.length > 5 && <Text dimColor>  +{plural(b.projects.length - 5, 'more project')}</Text>}
+        </Box>
+      ) : null,
+    ]
+  }
+
+  const everywhereRow = () => {
+    const key = 'sug:everywhere'
+    return [
+      <Button key={key} plain autoFocus={first(key)} onPress={openRow(key)}>
+        <Text bold>{open === key ? '› ' : '  '}</Text>
+        <Text color="green">◇ </Text>
+        <Text bold={open === key}>{clip(`${plural(snap.everywhere.length, 'global')} you use in most projects`, W - 4)}</Text>
+      </Button>,
+      open === key ? (
+        <Box key={`detail:${key}`} flexDirection="column" paddingLeft={4}>
+          <Box flexDirection="row" gap={2}>
+            {action('k', 'keep', 'Keep global', run('Saving…', () => keepGlobal($, opts, snap.everywhere, true)))}
+          </Box>
+          <Text>{snap.everywhere.map(nameOf).join(', ')}</Text>
+        </Box>
+      ) : null,
+    ]
+  }
+
+  const nothingToSplit = !snap.bundles.length && !snap.everywhere.length && !snap.unused.length
+  const unsorted = snap.items.filter(i => i.claim === 'new').length
+  const projectOnly = snap.bundles.reduce((n, b) => n + b.ids.length, 0)
+  // Every count about the global scope, on one line.
+  const globals = [
+    kept ? `${kept} always on` : '',
+    projectOnly ? `${projectOnly} to make local` : '',
+    snap.unused.length ? `${snap.unused.length} never used` : '',
+  ].filter(Boolean)
+  // The keys row names what Enter does on the row under the cursor.
+  const curKit = hereKits.find(c => `here:${c.name}` === cur)
+  const enterHint = curKit ? `Turn ${statusIn(curKit, here)?.status === 'on' ? 'off' : 'on'}`
+    : cur.startsWith('sug:') ? (cur === open ? 'Close' : 'Open') : ''
+  const name = here.split('/').pop() ?? ''
+  const lastLine = lines.filter(worthLogging).at(-1) ?? ''
+  return (
+    <Box flexDirection="column">
+      {here ? (
+        <Text wrap="truncate-end">
+          <Text dimColor>{shortPath(here, home).slice(0, -name.length)}</Text>
+          <Text bold>{name}</Text>
+        </Text>
+      ) : (
+        <Text wrap="truncate-end">
+          <Text bold>Not in a project</Text>
+          <Text dimColor>  open /scope from a project to toggle kits</Text>
+        </Text>
+      )}
+      <Box flexDirection="row" columnGap={2} flexWrap="wrap">
+        <Button key="advanced" hotkey="a" plain onPress={() => void switchMode($, 'advanced')}>Advanced</Button>
+        <Button key="rescan" hotkey="r" plain dimColor={doing !== ''}
+          onPress={() => act($, opts, 'Rescanning…', async () => '', true).then(() => undefined)}>Rescan</Button>
+        {unsorted > 0 && <Button key="triage" hotkey="t" plain onPress={() => void $.prompt.submit({ text: TRIAGE })}>Let Claude triage</Button>}
+        {!showHelp && <Button key="help" hotkey="h" plain onPress={() => void toggleHelp($, 'local')}>Help</Button>}
+        {enterHint !== '' && <Text>Enter: {enterHint}</Text>}
+      </Box>
+      {showHelp && helpBox(ui, 'local', W, () => void toggleHelp($, 'local'))}
+      {doing !== '' && <Text color="yellow">⟳ {doing}</Text>}
+      {snap.historyProblem !== '' && <Text color="red" wrap="truncate-end">! {snap.historyProblem}</Text>}
+      {/* A broken kits.json, or a kit left out of cc.sh, stops toggling: say so here too. */}
+      {snap.problems.filter(pr => pr.includes('kits.json') || pr.startsWith('kit ')).map(pr => <Text color="red" wrap="truncate-end">! {pr}</Text>)}
+      <Text dimColor>{'─'.repeat(W)}</Text>
+
+      {here !== '' && (
+        <Box flexDirection="column">
+          {heading('In this project')}
+          {snap.kits.length === 0 && (
+            <Text dimColor>{snap.bundles.length ? 'No kits yet: make one local below.'
+              : unsorted ? 'No kits yet: t lets Claude build them from your globals.' : 'No kits yet.'}</Text>
+          )}
+          {hereKits.flatMap(hereRow)}
+          {usedOff.length > 0 && (
+            <Button key="turn-on-used" hotkey="y" plain dimColor={doing !== ''}
+              onPress={run('Turning on…', () => turnOnUsed($, opts, usedOff, here, home))}>
+              {clip(`Turn on what you used here: ${usedOff.map(c => c.name).join(', ')}`, W - 3)}
+            </Button>
+          )}
+        </Box>
+      )}
+
+      <Box flexDirection="column" marginTop={here !== '' ? 1 : 0}>
+        {heading('Global, but used in few projects')}
+        {snap.bundles.length > 0 && <Text dimColor wrap="truncate-end">Make these project-only to cut context elsewhere.</Text>}
+        {loading && <Text dimColor>Reading your history to spot habits…</Text>}
+        {!loading && nothingToSplit && <Text color="green">✓ Nothing to split out of your global setup.</Text>}
+        {!loading && !snap.bundles.length && snap.unused.length > 0 && (
+          <Text dimColor wrap="truncate-end">{plural(snap.unused.length, 'global')} never used: t lets Claude sort them.</Text>
+        )}
+        {snap.bundles.flatMap(sugRow)}
+        {snap.everywhere.length > 0 && everywhereRow()}
+      </Box>
+      {globals.length > 0 && <Text dimColor wrap="truncate-end">Globals: {globals.join(' · ')}</Text>}
+      {lastLine !== '' && (
+        <Box marginTop={1}>
+          <Text dimColor wrap="truncate-end">Last: {lastLine}</Text>
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+/** Advanced mode: every global install and every kit, across all projects. */
+async function drawAdvanced($: $T, e: RenderInput<'Pane'>, opts: Opts) {
+  const ui = $.ui.resolve(e)
+  const { Box, Text, Button } = ui
+  const snap = await read($, snapshot)
+  const v = await read($, view)
+  const cursor = await read($, pick)
+  const showHelp = !(await read($, helpHidden)).includes(v.tab)
+  const doing = await read($, busy)
+  const lines = await read($, log)
+  const W = Math.max(30, e.props.bodyColumns)
+  const home = snap?.home ?? ''
+  const now = snap?.scannedAt ?? 0
+  const run = (label: string, work: () => Promise<string>, quiet = false) => () =>
+    act($, opts, label, work, quiet).then(() => undefined)
+
+  if (!snap) return <Text dimColor>Scanning your setup…</Text>
+
+  const loading = !snap.backfilledAt
+  const since = snap.historySince ? ` since ${day(snap.historySince, now)}` : ''
+  const wide = W >= 56
+  const stale = (pr: KitProject) => isStale(pr, now, opts.staleDays)
+  const pendingOf = (c: KitRow) => c.projects.filter(pr => pr.status !== 'on' && pr.n > 0).length
+
+  // Hotkeys show on the terminal only on plain Buttons (`k: Keep`), so every action is plain.
+  const action = (hotkey: string, id: string, label: string, onPress: () => unknown) => (
+    <Button key={`act-${id}`} hotkey={hotkey} plain dimColor={doing !== ''} onPress={onPress}>{label}</Button>
+  )
+  const tab = (id: View['tab'], hotkey: string, label: string) => (
+    <Button key={`tab-${id}`} hotkey={hotkey} plain onPress={() => setView($, { tab: id, selected: '' })}>
+      <Text bold={v.tab === id} underline={v.tab === id} dimColor={v.tab !== id}>{label}</Text>
+    </Button>
+  )
+
+  // ---- what is selected, and what can be done to it
+  const rank = (i: ItemRow) => (i.claim === 'new' ? 0 : i.claim === 'keep' ? 2 : 1)
+  const sorted = [...snap.items].sort((a, b) => rank(a) - rank(b) || b.total - a.total)
+  const open = sorted.filter(i => i.claim !== 'keep')
+  const kept = sorted.filter(i => i.claim === 'keep')
+  const shown = v.showKept ? sorted : open
+  // Nothing is open until Enter opens a row; Enter on the open row closes it.
+  const selItem = v.tab === 'globals' ? shown.find(i => i.id === v.selected) : undefined
+  const selKit = v.tab === 'kits' ? snap.kits.find(c => c.name === v.selected) : undefined
+  const toggle = (id: string) => () => update($, view, cur => ({ ...cur, selected: cur.selected === id ? '' : id }))
+
+  // The open row's actions sit at the end of its details, so a hotkey acts on what is shown open.
+  const actions = (buttons: (ReturnType<typeof action> | false)[]) => (
+    <Box flexDirection="row" columnGap={2} flexWrap="wrap">{buttons.filter(b => b !== false)}</Box>
+  )
+  const itemActions = (i: ItemRow) => {
+    const kit = kitOf(i.claim)
+    return actions([
+      i.claim.startsWith('kit:')
+        ? action('o', 'adopt', `Adopt ${kit}`, run(`Adopting ${kit}…`, () => adopt($, opts, kit)))
+        : action('m', 'make', 'Make a kit', () => void $.prompt.submit({ text: `${TRIAGE}\n\nStart with ${i.id} only.` })),
+      i.claim === 'new' && action('k', 'keep', 'Keep global', run('Saving…', () => keepGlobal($, opts, [i.id], true))),
+      i.claim === 'keep' && action('u', 'unkeep', 'Unkeep', run('Saving…', () => keepGlobal($, opts, [i.id], false))),
+      !loading && action('x', 'remove', 'Remove', run(`Removing ${i.name}…`, () => removeOne($, opts, i.id))),
+    ])
+  }
+  const kitActions = (c: KitRow) => {
+    const staleN = c.projects.filter(stale).length
+    return actions([
+      (c.globals.length > 0 || pendingOf(c) > 0) && action('o', 'adopt', 'Adopt', run(`Adopting ${c.name}…`, () => adopt($, opts, c.name))),
+      snap.cwdProject !== '' && c.projects.find(pr => pr.project === snap.cwdProject)?.status !== 'on'
+        && action('e', 'enable', 'Enable here', run(`Enabling ${c.name}…`, () => toggleKit($, opts, c, snap.cwdProject, false, home))),
+      staleN > 0 && action('p', 'prune', `Prune ${staleN} stale`, run(`Pruning ${c.name}…`, () => prune($, opts, c.name))),
+    ])
+  }
+
+  // What Enter does on the row under the cursor, named last in the keys row as in the local pane.
+  const enterHint = (() => {
+    if (cursor === 'kept') return v.showKept ? 'Hide kept' : 'Show kept'
+    if (cursor.startsWith('item:')) return cursor.slice('item:'.length) === selItem?.id ? 'Close' : 'Open'
+    if (cursor.startsWith('kit:')) return cursor.slice('kit:'.length) === selKit?.name ? 'Close' : 'Open'
+    if (!cursor.startsWith('proj:') || !selKit) return ''
+    const pr = selKit.projects.find(p => cursor === `proj:${selKit.name}:${p.project}`)
+    return pr ? `Turn ${pr.status === 'on' ? 'off' : 'on'} there` : ''
+  })()
+
+  // ---- header: totals, what waits on the person, the keys
+  const t = todo(snap, opts.staleDays)
+  const waiting = [
+    t.unsorted ? `${t.unsorted} unsorted` : '',
+    t.toAdopt ? `${t.toAdopt} to adopt` : '',
+    t.usedOff ? `${t.usedOff} used but off` : '',
+    t.stale ? `${t.stale} stale` : '',
+  ].filter(Boolean).join(' · ')
+  const header = (
+    <Box flexDirection="column">
+      <Text dimColor>{plural(snap.items.length, 'global')} · {plural(snap.kits.length, 'kit')}{snap.historySince ? ` · usage${since}` : ''}</Text>
+      {waiting ? <Text color="yellow">▸ {waiting}</Text> : <Text color="green">✓ Nothing waiting on you</Text>}
+      <Box flexDirection="row" columnGap={2} flexWrap="wrap">
+        {tab('globals', 'g', 'Globals')}
+        {tab('kits', 'i', 'Kits')}
+        <Button key="local" hotkey="a" plain onPress={() => void switchMode($, 'local')}>Back to local</Button>
+        <Button key="rescan" hotkey="r" plain dimColor={doing !== ''} onPress={run('Rescanning…', async () => '', true)}>Rescan</Button>
+        {!snap.rcLoaded && snap.kits.length > 0 && (
+          <Button key="shell" hotkey="s" plain dimColor={doing !== ''} onPress={run('Setting up your shell…', async () =>
+            (await ensureRc($, await paths($, opts.rc))) ? 'cc-* functions load in new shells from now on.' : 'Left your shell files as they are.')}>
+            Set up shell
+          </Button>
+        )}
+        {t.unsorted > 0 && (
+          <Button key="triage" hotkey="t" plain onPress={() => void $.prompt.submit({ text: TRIAGE })}>Let Claude triage</Button>
+        )}
+        {!showHelp && <Button key="help" hotkey="h" plain onPress={() => void toggleHelp($, v.tab)}>Help</Button>}
+        {enterHint !== '' && <Text>Enter: {enterHint}</Text>}
+      </Box>
+      {showHelp && helpBox(ui, v.tab, W, () => void toggleHelp($, v.tab))}
+      {doing !== '' && <Text color="yellow">⟳ {doing}</Text>}
+      {snap.problems.map(pr => <Text color="red">! {pr}</Text>)}
+      {loading && <Text dimColor>Reading your transcripts for usage history…</Text>}
+    </Box>
+  )
+
+  const rule = <Text dimColor>{'─'.repeat(W)}</Text>
+  const recent = lines.filter(worthLogging).slice(-3)
+  const logLines = recent.length > 0 && (
+    <Box flexDirection="column" marginTop={1}>
+      <Text dimColor bold>Recent</Text>
+      {recent.map((l, n) => <Text dimColor wrap={n === recent.length - 1 ? 'wrap' : 'truncate-end'}>  {l}</Text>)}
+    </Box>
+  )
+
+  if (v.tab === 'globals') {
+    // Columns sum to W exactly: marker 2, kind 7 (wide only), name, calls 6, last 6, proj 5 (wide only), status.
+    const nameW = wide ? Math.min(36, Math.max(8, W - 38)) : Math.max(8, W - 24)
+    const statusW = W - 2 - nameW - 12 - (wide ? 12 : 0)
+    const num = (s: string, w: number) => fit(loading ? '…' : s, w)
+
+    const detail = (i: ItemRow) => {
+      const kit = kitOf(i.claim)
+      const why = i.claim === 'new'
+        ? 'Unsorted: keep it global if you use it everywhere, or make a kit so it loads only where you need it.'
+        : i.claim === 'keep' ? 'Kept global on purpose.'
+        : `Covered by kit ${kit}, but still installed globally. Adopt enables ${kit} where it was used, then removes this global.`
+      return (
+        // The actions first, with what they would do, so a long usage list never pushes them out of view.
+        <Box key={`detail:${i.id}`} flexDirection="column" paddingLeft={4} marginBottom={1}>
+          {itemActions(i)}
+          <Text color={i.claim.startsWith('kit:') ? 'yellow' : undefined} dimColor={!i.claim.startsWith('kit:')}>{why}</Text>
+          {!(i.kind === 'mcp' && i.ref === i.name) && <Text dimColor wrap="truncate-middle">{shortPath(i.ref, home)}</Text>}
+          {loading && <Text dimColor>Usage: still reading your transcripts…</Text>}
+          {!loading && i.uses.length === 0 && <Text dimColor>No recorded use{since}.</Text>}
+          {!loading && i.uses.slice(0, 5).map(u => (
+            <Text>{fit(shortPath(u.project, home), W - 17)} <Text dimColor>{fit(count(u.n), 6)}{ago(u.last, now)}</Text></Text>
+          ))}
+          {!loading && i.uses.length > 5 && <Text dimColor>+{plural(i.uses.length - 5, 'more project')}</Text>}
+        </Box>
+      )
+    }
+    const row = (i: ItemRow, first: boolean) => {
+      const isSel = i.id === selItem?.id
+      return [
+        <Button key={`item:${i.id}`} plain autoFocus={first ? true : undefined} onPress={toggle(i.id)}>
+          <Text bold>{isSel ? '› ' : '  '}</Text>
+          <Text dimColor>{wide ? fit(i.kind, 7) : ''}</Text>
+          <Text bold={isSel}>{fit(i.name, nameW - 1)} </Text>
+          <Text dimColor>{num(count(i.total), 6)}{num(ago(i.last, now), 6)}{wide ? num(`${i.uses.length}p`, 5) : ''}</Text>
+          <Text color={i.claim === 'keep' ? undefined : 'yellow'} dimColor={i.claim === 'keep'}>{clip(claimText(i.claim), statusW)}</Text>
+        </Button>,
+        isSel ? detail(i) : null,
+      ]
+    }
+    return (
+      <Box flexDirection="column">
+        {header}
+        {rule}
+        {sorted.length === 0 && <Text dimColor>Nothing is installed globally.</Text>}
+        {sorted.length > 0 && (
+          <Text dimColor>
+            {'  '}{wide ? fit('kind', 7) : ''}{fit('name', nameW)}{fit('calls', 6)}{fit('last', 6)}{wide ? fit('proj', 5) : ''}{clip('status', statusW)}
+          </Text>
+        )}
+        {open.flatMap((i, n) => row(i, n === 0))}
+        {kept.length > 0 && (
+          <Button key="kept" plain onPress={() => setView($, { showKept: !v.showKept })}>
+            <Text dimColor>{v.showKept ? '▾' : '▸'} Kept global ({kept.length})</Text>
+          </Button>
+        )}
+        {v.showKept && kept.flatMap((i, n) => row(i, open.length === 0 && n === 0))}
+        {logLines}
+      </Box>
+    )
+  }
+
+  // Columns sum to W exactly: marker 2, name, summary (wide only), on in 6, to do 10.
+  const cNameW = Math.min(16, Math.max(8, ...snap.kits.map(c => c.name.length + 1)))
+  const sumW = wide ? W - 18 - cNameW : 0
+  const cNameCol = wide ? cNameW : W - 18
+
+  const kitDetail = (c: KitRow) => {
+    const pending = pendingOf(c)
+    return (
+      // The actions first, with what Adopt would do; then the parts, and the projects with how to toggle them.
+      <Box key={`detail:${c.name}`} flexDirection="column" paddingLeft={4} marginBottom={1}>
+        {kitActions(c)}
+        {c.globals.length > 0 && (
+          <Text color="yellow">Still installed globally: {c.globals.join(', ')}. Adopt enables {c.name} where it was used, then removes the global{c.globals.length > 1 ? 's' : ''}.</Text>
+        )}
+        {c.globals.length === 0 && pending > 0 && (
+          <Text color="yellow">Used but off in {plural(pending, 'project')}: Adopt enables it there.</Text>
+        )}
+        {sumW === 0 && <Text>{c.summary}</Text>}
+        {c.parts.map(line => line.startsWith('runs: ')
+          ? <Text>· {line}</Text>
+          : <Text dimColor wrap="truncate-end">· {line}</Text>)}
+        <Text dimColor>From a shell: cc-{c.name} · cc-{c.name}-off</Text>
+        {c.projects.length === 0 && <Text dimColor>Not enabled or used anywhere yet.</Text>}
+        {c.projects.length > 0 && <Text dimColor>Enter on a project turns {c.name} on or off there.</Text>}
+        {c.projects.map(pr => {
+          const mark = pr.status === 'on' ? '✓' : pr.status === 'partial' ? '◐' : '+'
+          const tag = pr.status === 'on' ? (stale(pr) ? 'stale' : '') : pr.status === 'partial' ? 'partial' : 'used, off'
+          const toOff = pr.status === 'on'
+          return (
+            <Button key={`proj:${c.name}:${pr.project}`} plain
+              onPress={run(`${toOff ? 'Removing' : 'Enabling'} ${c.name}…`, () => toggleKit($, opts, c, pr.project, toOff, home))}>
+              <Text color={pr.status === 'on' ? 'green' : 'yellow'}>{mark} </Text>
+              {fit(shortPath(pr.project, home), W - 29)}{' '}
+              <Text dimColor>{fit(count(pr.n), 6)}{fit(ago(pr.last, now), 6)}</Text>
+              <Text color="yellow">{tag}</Text>
+            </Button>
+          )
+        })}
+      </Box>
+    )
+  }
+
+  return (
+    <Box flexDirection="column">
+      {header}
+      {rule}
+      {snap.kits.length === 0 && <Text dimColor>No kits yet. Press m on an unsorted global, or t to triage them all with Claude.</Text>}
+      {snap.kits.length > 0 && (
+        <Text dimColor>{'  '}{fit('kit', cNameCol)}{sumW ? fit('what', sumW) : ''}{fit('on in', 6)}to do</Text>
+      )}
+      {snap.kits.flatMap((c, n) => {
+        const isSel = c.name === selKit?.name
+        const pending = pendingOf(c)
+        const staleN = c.projects.filter(stale).length
+        const onN = c.projects.filter(pr => pr.status === 'on').length
+        // Verbs that match the open row's actions: o Adopt, Enter on a project, p Prune.
+        const todo = c.globals.length ? 'adopt' : pending ? `turn on ${pending}` : staleN ? `prune ${staleN}` : ''
+        return [
+          <Button key={`kit:${c.name}`} plain autoFocus={n === 0 ? true : undefined} onPress={toggle(c.name)}>
+            <Text bold>{isSel ? '› ' : '  '}</Text>
+            <Text bold>{fit(c.name, cNameCol - 1)} </Text>
+            <Text dimColor>{sumW ? `${fit(c.summary, sumW - 1)} ` : ''}</Text>
+            <Text dimColor={onN === 0}>{fit(onN ? String(onN) : '—', 6)}</Text>
+            <Text color="yellow">{clip(todo, 10)}</Text>
+          </Button>,
+          isSel ? kitDetail(c) : null,
+        ]
+      })}
+      {logLines}
+    </Box>
+  )
 }
 
 export const register: Register = (on, options) => {
@@ -1121,21 +1597,21 @@ export const register: Register = (on, options) => {
     if (verb === 'audit') return { text: auditText(await rescan($, opts), p.home, opts.staleDays) }
     const isAdvanced = verb === 'advanced' || verb === 'all'
     const opened = await switchMode($, isAdvanced ? 'advanced' : 'local')
+    // After the open, which a close before it would stop counting as the person's.
+    await $.ui.close({ id: LEGACY_ADVANCED })
     void rescan($, opts)
     const what = isAdvanced ? 'Scope (all projects)' : 'Scope'
     return { text: opened.isPlaced ? `${what} pane opened.` : `${what} pane waiting for room (${opened.reason}). /scope audit prints it as text.` }
   })
 
-  // The local pane's cursor names what Enter does in the footer. It opens nothing: rows that opened under
+  // The pane's cursor names what Enter does in the footer. It opens nothing: rows that opened under
   // the ring shifted the ones below it before the redraw, and the arrows skipped them.
-  for (const requestId of [PANE, ADVANCED]) {
-    on('ui.focus', { requestId }, async ($, e, next) => {
-      const result = await next(e)
-      const key = e.element ?? ''
-      if (!('deny' in result && result.deny) && (await read($, pick)) !== key) await update($, pick, () => key)
-      return result
-    })
-  }
+  on('ui.focus', { requestId: PANE }, async ($, e, next) => {
+    const result = await next(e)
+    const key = e.element ?? ''
+    if (!('deny' in result && result.deny) && (await read($, pick)) !== key) await update($, pick, () => key)
+    return result
+  })
 
   // The band above the prompt speaks for this project: its kits as lights, on, partly on or off.
   // Drawn here rather than with $.ui.status, which Claude Code shows as a yellow warning with our name before it.
@@ -1176,465 +1652,9 @@ export const register: Register = (on, options) => {
     )
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const ui = $.ui.resolve(e)
-    const { Box, Text, Button } = ui
-    const snap = await read($, snapshot)
-    const sel = await read($, pick)
-    const openKey = await read($, opened)
-    const showHelp = !(await read($, helpHidden)).includes('local')
-    const doing = await read($, busy)
-    const lines = await read($, log)
-    const W = Math.max(30, e.props.bodyColumns)
-    if (!snap) return <Text dimColor>Scanning your setup…</Text>
-
-    const home = snap.home
-    const here = snap.cwdProject
-    const loading = !snap.backfilledAt
-    const run = (label: string, work: () => Promise<string>) => () => act($, opts, label, work).then(() => undefined)
-    const nameOf = (id: string) => snap.items.find(i => i.id === id)?.name ?? id
-    const kept = snap.items.filter(i => i.claim === 'keep').length
-    // Kits used here but off come first: they are the ones waiting on a decision.
-    const hereKits = here ? [...snap.kits].sort((a, b) => Number(usedOffHere(b, here)) - Number(usedOffHere(a, here))) : []
-    const usedOff = hereKits.filter(c => usedOffHere(c, here))
-
-    // Rows in order: this project's kits, the bundles to make local, then what to keep global.
-    const keys = [
-      ...hereKits.map(c => `here:${c.name}`),
-      ...snap.bundles.map(b => `sug:${b.id}`),
-      ...(snap.everywhere.length ? ['sug:everywhere'] : []),
-    ]
-    const cur = keys.includes(sel) ? sel : (keys[0] ?? '')
-    // Enter opens a suggestion, and on the open one closes it again.
-    const sugKeys = keys.filter(k => k.startsWith('sug:'))
-    const open = sugKeys.includes(openKey) ? openKey : ''
-    const openRow = (key: string) => () => update($, opened, o => (o === key ? '' : key))
-    const first = (key: string) => (key === keys[0] ? true : undefined)
-    const action = (hotkey: string, id: string, label: string, onPress: () => unknown) => (
-      <Button key={`act-${id}`} hotkey={hotkey} plain dimColor={doing !== ''} onPress={onPress}>{label}</Button>
-    )
-    const heading = (text: string) => <Text bold>{text}</Text>
-
-    // ---- this project: each kit, ● on or ○ off, Enter to toggle; the last cell only for what needs a look
-    const nameW = Math.min(16, Math.max(8, ...snap.kits.map(c => c.name.length + 1)))
-    const stateW = 12
-    const sumW = Math.max(0, W - 4 - nameW - stateW)
-    const hereRow = (c: KitRow) => {
-      const key = `here:${c.name}`
-      const pr = statusIn(c, here)
-      const isOn = pr?.status === 'on'
-      const isUsedOff = usedOffHere(c, here)
-      const mark = isOn ? '●' : pr?.status === 'partial' ? '◐' : '○'
-      const state = isOn ? (isStale(pr!, snap.scannedAt, opts.staleDays) ? 'idle' : '')
-        : isUsedOff ? `used ${ago(pr!.last, snap.scannedAt)} ago` : pr?.status === 'partial' ? 'partial' : ''
-      return [
-        <Button key={key} plain autoFocus={first(key)}
-          onPress={run(`${isOn ? 'Turning off' : 'Turning on'} ${c.name}…`, () => toggleKit($, opts, c, here, isOn, home))}>
-          <Text>{'  '}</Text>
-          <Text color={isOn ? 'green' : isUsedOff || pr?.status === 'partial' ? 'yellow' : undefined} dimColor={!pr}>{mark} </Text>
-          <Text>{fit(c.name, nameW)}</Text>
-          <Text dimColor>{fit(c.summary, sumW)}</Text>
-          <Text color="yellow">{clip(state, stateW)}</Text>
-        </Button>,
-        c.globals.length ? (
-          <Box key={`detail:${key}`} flexDirection="column" paddingLeft={4}>
-            <Text dimColor wrap="truncate-end">Still global too: {c.globals.map(nameOf).join(', ')}</Text>
-          </Box>
-        ) : null,
-      ]
-    }
-
-    // ---- bundles to split out of the global scope
-    const sugRow = (b: Bundle) => {
-      const key = `sug:${b.id}`
-      const isHere = b.projects.some(pr => pr.project === here)
-      const label = b.ids.length === 1 ? nameOf(b.ids[0]!) : `${b.name} (${b.ids.length})`
-      return [
-        <Button key={key} plain autoFocus={first(key)} onPress={openRow(key)}>
-          <Text bold>{open === key ? '› ' : '  '}</Text>
-          <Text color="yellow">◆ </Text>
-          <Text bold={open === key}>{fit(label, Math.min(24, Math.max(10, W - 30)))}</Text>
-          <Text dimColor>{clip(`${b.why}${isHere ? ' · here' : ''}`, Math.max(0, W - 4 - Math.min(24, Math.max(10, W - 30))))}</Text>
-        </Button>,
-        open === key ? (
-          // The actions first, so a long list of projects never pushes them out of view; then one project a line.
-          <Box key={`detail:${key}`} flexDirection="column" paddingLeft={4}>
-            <Box flexDirection="row" columnGap={2} flexWrap="wrap">
-              {action('l', 'local', b.direct ? 'Make local' : 'Make local with Claude',
-                run(`Making ${b.name} local…`, () => makeLocal($, opts, b, snap.items)))}
-              {action('k', 'keep', 'Keep global', run('Saving…', () => keepGlobal($, opts, b.ids, true)))}
-            </Box>
-            {b.ids.length > 1 && <Text>{b.ids.map(nameOf).join(', ')}</Text>}
-            <Text dimColor>Used in:</Text>
-            {b.projects.slice(0, 5).map(pr => (
-              <Text bold={pr.project === here}>
-                {'  '}{fit(shortPath(pr.project, home), W - 18)}<Text dimColor>{fit(count(pr.n), 6)}{ago(pr.last, snap.scannedAt)}</Text>
-              </Text>
-            ))}
-            {b.projects.length > 5 && <Text dimColor>  +{plural(b.projects.length - 5, 'more project')}</Text>}
-          </Box>
-        ) : null,
-      ]
-    }
-
-    const everywhereRow = () => {
-      const key = 'sug:everywhere'
-      return [
-        <Button key={key} plain autoFocus={first(key)} onPress={openRow(key)}>
-          <Text bold>{open === key ? '› ' : '  '}</Text>
-          <Text color="green">◇ </Text>
-          <Text bold={open === key}>{clip(`${plural(snap.everywhere.length, 'global')} you use in most projects`, W - 4)}</Text>
-        </Button>,
-        open === key ? (
-          <Box key={`detail:${key}`} flexDirection="column" paddingLeft={4}>
-            <Box flexDirection="row" gap={2}>
-              {action('k', 'keep', 'Keep global', run('Saving…', () => keepGlobal($, opts, snap.everywhere, true)))}
-            </Box>
-            <Text>{snap.everywhere.map(nameOf).join(', ')}</Text>
-          </Box>
-        ) : null,
-      ]
-    }
-
-    const nothingToSplit = !snap.bundles.length && !snap.everywhere.length && !snap.unused.length
-    const unsorted = snap.items.filter(i => i.claim === 'new').length
-    const projectOnly = snap.bundles.reduce((n, b) => n + b.ids.length, 0)
-    // Every count about the global scope, on one line.
-    const globals = [
-      kept ? `${kept} always on` : '',
-      projectOnly ? `${projectOnly} to make local` : '',
-      snap.unused.length ? `${snap.unused.length} never used` : '',
-    ].filter(Boolean)
-    // The keys row names what Enter does on the row under the cursor.
-    const curKit = hereKits.find(c => `here:${c.name}` === cur)
-    const enterHint = curKit ? `Turn ${statusIn(curKit, here)?.status === 'on' ? 'off' : 'on'}`
-      : cur.startsWith('sug:') ? (cur === open ? 'Close' : 'Open') : ''
-    const name = here.split('/').pop() ?? ''
-    const lastLine = lines.filter(worthLogging).at(-1) ?? ''
-    return (
-      <Box flexDirection="column">
-        {here ? (
-          <Text wrap="truncate-end">
-            <Text dimColor>{shortPath(here, home).slice(0, -name.length)}</Text>
-            <Text bold>{name}</Text>
-          </Text>
-        ) : (
-          <Text wrap="truncate-end">
-            <Text bold>Not in a project</Text>
-            <Text dimColor>  open /scope from a project to toggle kits</Text>
-          </Text>
-        )}
-        <Box flexDirection="row" columnGap={2} flexWrap="wrap">
-          <Button key="advanced" hotkey="a" plain onPress={() => void switchMode($, 'advanced')}>Advanced</Button>
-          <Button key="rescan" hotkey="r" plain dimColor={doing !== ''}
-            onPress={() => act($, opts, 'Rescanning…', async () => '', true).then(() => undefined)}>Rescan</Button>
-          {unsorted > 0 && <Button key="triage" hotkey="t" plain onPress={() => void $.prompt.submit({ text: TRIAGE })}>Let Claude triage</Button>}
-          {!showHelp && <Button key="help" hotkey="h" plain onPress={() => void toggleHelp($, 'local')}>Help</Button>}
-          {enterHint !== '' && <Text>Enter: {enterHint}</Text>}
-        </Box>
-        {showHelp && helpBox(ui, 'local', W, () => void toggleHelp($, 'local'))}
-        {doing !== '' && <Text color="yellow">⟳ {doing}</Text>}
-        {snap.historyProblem !== '' && <Text color="red" wrap="truncate-end">! {snap.historyProblem}</Text>}
-        {/* A broken kits.json, or a kit left out of cc.sh, stops toggling: say so here too. */}
-        {snap.problems.filter(pr => pr.includes('kits.json') || pr.startsWith('kit ')).map(pr => <Text color="red" wrap="truncate-end">! {pr}</Text>)}
-        <Text dimColor>{'─'.repeat(W)}</Text>
-
-        {here !== '' && (
-          <Box flexDirection="column">
-            {heading('In this project')}
-            {snap.kits.length === 0 && (
-              <Text dimColor>{snap.bundles.length ? 'No kits yet: make one local below.'
-                : unsorted ? 'No kits yet: t lets Claude build them from your globals.' : 'No kits yet.'}</Text>
-            )}
-            {hereKits.flatMap(hereRow)}
-            {usedOff.length > 0 && (
-              <Button key="turn-on-used" hotkey="y" plain dimColor={doing !== ''}
-                onPress={run('Turning on…', () => turnOnUsed($, opts, usedOff, here, home))}>
-                {clip(`Turn on what you used here: ${usedOff.map(c => c.name).join(', ')}`, W - 3)}
-              </Button>
-            )}
-          </Box>
-        )}
-
-        <Box flexDirection="column" marginTop={here !== '' ? 1 : 0}>
-          {heading('Global, but used in few projects')}
-          {snap.bundles.length > 0 && <Text dimColor wrap="truncate-end">Make these project-only to cut context elsewhere.</Text>}
-          {loading && <Text dimColor>Reading your history to spot habits…</Text>}
-          {!loading && nothingToSplit && <Text color="green">✓ Nothing to split out of your global setup.</Text>}
-          {!loading && !snap.bundles.length && snap.unused.length > 0 && (
-            <Text dimColor wrap="truncate-end">{plural(snap.unused.length, 'global')} never used: t lets Claude sort them.</Text>
-          )}
-          {snap.bundles.flatMap(sugRow)}
-          {snap.everywhere.length > 0 && everywhereRow()}
-        </Box>
-        {globals.length > 0 && <Text dimColor wrap="truncate-end">Globals: {globals.join(' · ')}</Text>}
-        {lastLine !== '' && (
-          <Box marginTop={1}>
-            <Text dimColor wrap="truncate-end">Last: {lastLine}</Text>
-          </Box>
-        )}
-      </Box>
-    )
-  })
-
-  on('ui.render', { component: 'Pane', requestId: ADVANCED }, async ($, e) => {
-    const ui = $.ui.resolve(e)
-    const { Box, Text, Button } = ui
-    const snap = await read($, snapshot)
-    const v = await read($, view)
-    const cursor = await read($, pick)
-    const showHelp = !(await read($, helpHidden)).includes(v.tab)
-    const doing = await read($, busy)
-    const lines = await read($, log)
-    const W = Math.max(30, e.props.bodyColumns)
-    const home = snap?.home ?? ''
-    const now = snap?.scannedAt ?? 0
-    const run = (label: string, work: () => Promise<string>, quiet = false) => () =>
-      act($, opts, label, work, quiet).then(() => undefined)
-
-    if (!snap) return <Text dimColor>Scanning your setup…</Text>
-
-    const loading = !snap.backfilledAt
-    const since = snap.historySince ? ` since ${day(snap.historySince, now)}` : ''
-    const wide = W >= 56
-    const stale = (pr: KitProject) => isStale(pr, now, opts.staleDays)
-    const pendingOf = (c: KitRow) => c.projects.filter(pr => pr.status !== 'on' && pr.n > 0).length
-
-    // Hotkeys show on the terminal only on plain Buttons (`k: Keep`), so every action is plain.
-    const action = (hotkey: string, id: string, label: string, onPress: () => unknown) => (
-      <Button key={`act-${id}`} hotkey={hotkey} plain dimColor={doing !== ''} onPress={onPress}>{label}</Button>
-    )
-    const tab = (id: View['tab'], hotkey: string, label: string) => (
-      <Button key={`tab-${id}`} hotkey={hotkey} plain onPress={() => setView($, { tab: id, selected: '' })}>
-        <Text bold={v.tab === id} underline={v.tab === id} dimColor={v.tab !== id}>{label}</Text>
-      </Button>
-    )
-
-    // ---- what is selected, and what can be done to it
-    const rank = (i: ItemRow) => (i.claim === 'new' ? 0 : i.claim === 'keep' ? 2 : 1)
-    const sorted = [...snap.items].sort((a, b) => rank(a) - rank(b) || b.total - a.total)
-    const open = sorted.filter(i => i.claim !== 'keep')
-    const kept = sorted.filter(i => i.claim === 'keep')
-    const shown = v.showKept ? sorted : open
-    // Nothing is open until Enter opens a row; Enter on the open row closes it.
-    const selItem = v.tab === 'globals' ? shown.find(i => i.id === v.selected) : undefined
-    const selKit = v.tab === 'kits' ? snap.kits.find(c => c.name === v.selected) : undefined
-    const toggle = (id: string) => () => update($, view, cur => ({ ...cur, selected: cur.selected === id ? '' : id }))
-
-    // The open row's actions sit at the end of its details, so a hotkey acts on what is shown open.
-    const actions = (buttons: (ReturnType<typeof action> | false)[]) => (
-      <Box flexDirection="row" columnGap={2} flexWrap="wrap">{buttons.filter(b => b !== false)}</Box>
-    )
-    const itemActions = (i: ItemRow) => {
-      const kit = kitOf(i.claim)
-      return actions([
-        i.claim.startsWith('kit:')
-          ? action('o', 'adopt', `Adopt ${kit}`, run(`Adopting ${kit}…`, () => adopt($, opts, kit)))
-          : action('m', 'make', 'Make a kit', () => void $.prompt.submit({ text: `${TRIAGE}\n\nStart with ${i.id} only.` })),
-        i.claim === 'new' && action('k', 'keep', 'Keep global', run('Saving…', () => keepGlobal($, opts, [i.id], true))),
-        i.claim === 'keep' && action('u', 'unkeep', 'Unkeep', run('Saving…', () => keepGlobal($, opts, [i.id], false))),
-        !loading && action('x', 'remove', 'Remove', run(`Removing ${i.name}…`, () => removeOne($, opts, i.id))),
-      ])
-    }
-    const kitActions = (c: KitRow) => {
-      const staleN = c.projects.filter(stale).length
-      return actions([
-        (c.globals.length > 0 || pendingOf(c) > 0) && action('o', 'adopt', 'Adopt', run(`Adopting ${c.name}…`, () => adopt($, opts, c.name))),
-        snap.cwdProject !== '' && c.projects.find(pr => pr.project === snap.cwdProject)?.status !== 'on'
-          && action('e', 'enable', 'Enable here', run(`Enabling ${c.name}…`, () => toggleKit($, opts, c, snap.cwdProject, false, home))),
-        staleN > 0 && action('p', 'prune', `Prune ${staleN} stale`, run(`Pruning ${c.name}…`, () => prune($, opts, c.name))),
-      ])
-    }
-
-    // What Enter does on the row under the cursor, named last in the keys row as in the local pane.
-    const enterHint = (() => {
-      if (cursor === 'kept') return v.showKept ? 'Hide kept' : 'Show kept'
-      if (cursor.startsWith('item:')) return cursor.slice('item:'.length) === selItem?.id ? 'Close' : 'Open'
-      if (cursor.startsWith('kit:')) return cursor.slice('kit:'.length) === selKit?.name ? 'Close' : 'Open'
-      if (!cursor.startsWith('proj:') || !selKit) return ''
-      const pr = selKit.projects.find(p => cursor === `proj:${selKit.name}:${p.project}`)
-      return pr ? `Turn ${pr.status === 'on' ? 'off' : 'on'} there` : ''
-    })()
-
-    // ---- header: totals, what waits on the person, the keys
-    const t = todo(snap, opts.staleDays)
-    const waiting = [
-      t.unsorted ? `${t.unsorted} unsorted` : '',
-      t.toAdopt ? `${t.toAdopt} to adopt` : '',
-      t.usedOff ? `${t.usedOff} used but off` : '',
-      t.stale ? `${t.stale} stale` : '',
-    ].filter(Boolean).join(' · ')
-    const header = (
-      <Box flexDirection="column">
-        <Text dimColor>{plural(snap.items.length, 'global')} · {plural(snap.kits.length, 'kit')}{snap.historySince ? ` · usage${since}` : ''}</Text>
-        {waiting ? <Text color="yellow">▸ {waiting}</Text> : <Text color="green">✓ Nothing waiting on you</Text>}
-        <Box flexDirection="row" columnGap={2} flexWrap="wrap">
-          {tab('globals', 'g', 'Globals')}
-          {tab('kits', 'i', 'Kits')}
-          <Button key="local" hotkey="a" plain onPress={() => void switchMode($, 'local')}>Back to local</Button>
-          <Button key="rescan" hotkey="r" plain dimColor={doing !== ''} onPress={run('Rescanning…', async () => '', true)}>Rescan</Button>
-          {!snap.rcLoaded && snap.kits.length > 0 && (
-            <Button key="shell" hotkey="s" plain dimColor={doing !== ''} onPress={run('Setting up your shell…', async () =>
-              (await ensureRc($, await paths($, opts.rc))) ? 'cc-* functions load in new shells from now on.' : 'Left your shell files as they are.')}>
-              Set up shell
-            </Button>
-          )}
-          {t.unsorted > 0 && (
-            <Button key="triage" hotkey="t" plain onPress={() => void $.prompt.submit({ text: TRIAGE })}>Let Claude triage</Button>
-          )}
-          {!showHelp && <Button key="help" hotkey="h" plain onPress={() => void toggleHelp($, v.tab)}>Help</Button>}
-          {enterHint !== '' && <Text>Enter: {enterHint}</Text>}
-        </Box>
-        {showHelp && helpBox(ui, v.tab, W, () => void toggleHelp($, v.tab))}
-        {doing !== '' && <Text color="yellow">⟳ {doing}</Text>}
-        {snap.problems.map(pr => <Text color="red">! {pr}</Text>)}
-        {loading && <Text dimColor>Reading your transcripts for usage history…</Text>}
-      </Box>
-    )
-
-    const rule = <Text dimColor>{'─'.repeat(W)}</Text>
-    const recent = lines.filter(worthLogging).slice(-3)
-    const logLines = recent.length > 0 && (
-      <Box flexDirection="column" marginTop={1}>
-        <Text dimColor bold>Recent</Text>
-        {recent.map((l, n) => <Text dimColor wrap={n === recent.length - 1 ? 'wrap' : 'truncate-end'}>  {l}</Text>)}
-      </Box>
-    )
-
-    if (v.tab === 'globals') {
-      // Columns sum to W exactly: marker 2, kind 7 (wide only), name, calls 6, last 6, proj 5 (wide only), status.
-      const nameW = wide ? Math.min(36, Math.max(8, W - 38)) : Math.max(8, W - 24)
-      const statusW = W - 2 - nameW - 12 - (wide ? 12 : 0)
-      const num = (s: string, w: number) => fit(loading ? '…' : s, w)
-
-      const detail = (i: ItemRow) => {
-        const kit = kitOf(i.claim)
-        const why = i.claim === 'new'
-          ? 'Unsorted: keep it global if you use it everywhere, or make a kit so it loads only where you need it.'
-          : i.claim === 'keep' ? 'Kept global on purpose.'
-          : `Covered by kit ${kit}, but still installed globally. Adopt enables ${kit} where it was used, then removes this global.`
-        return (
-          // The actions first, with what they would do, so a long usage list never pushes them out of view.
-          <Box key={`detail:${i.id}`} flexDirection="column" paddingLeft={4} marginBottom={1}>
-            {itemActions(i)}
-            <Text color={i.claim.startsWith('kit:') ? 'yellow' : undefined} dimColor={!i.claim.startsWith('kit:')}>{why}</Text>
-            {!(i.kind === 'mcp' && i.ref === i.name) && <Text dimColor wrap="truncate-middle">{shortPath(i.ref, home)}</Text>}
-            {loading && <Text dimColor>Usage: still reading your transcripts…</Text>}
-            {!loading && i.uses.length === 0 && <Text dimColor>No recorded use{since}.</Text>}
-            {!loading && i.uses.slice(0, 5).map(u => (
-              <Text>{fit(shortPath(u.project, home), W - 17)} <Text dimColor>{fit(count(u.n), 6)}{ago(u.last, now)}</Text></Text>
-            ))}
-            {!loading && i.uses.length > 5 && <Text dimColor>+{plural(i.uses.length - 5, 'more project')}</Text>}
-          </Box>
-        )
-      }
-      const row = (i: ItemRow, first: boolean) => {
-        const isSel = i.id === selItem?.id
-        return [
-          <Button key={`item:${i.id}`} plain autoFocus={first ? true : undefined} onPress={toggle(i.id)}>
-            <Text bold>{isSel ? '› ' : '  '}</Text>
-            <Text dimColor>{wide ? fit(i.kind, 7) : ''}</Text>
-            <Text bold={isSel}>{fit(i.name, nameW - 1)} </Text>
-            <Text dimColor>{num(count(i.total), 6)}{num(ago(i.last, now), 6)}{wide ? num(`${i.uses.length}p`, 5) : ''}</Text>
-            <Text color={i.claim === 'keep' ? undefined : 'yellow'} dimColor={i.claim === 'keep'}>{clip(claimText(i.claim), statusW)}</Text>
-          </Button>,
-          isSel ? detail(i) : null,
-        ]
-      }
-      return (
-        <Box flexDirection="column">
-          {header}
-          {rule}
-          {sorted.length === 0 && <Text dimColor>Nothing is installed globally.</Text>}
-          {sorted.length > 0 && (
-            <Text dimColor>
-              {'  '}{wide ? fit('kind', 7) : ''}{fit('name', nameW)}{fit('calls', 6)}{fit('last', 6)}{wide ? fit('proj', 5) : ''}{clip('status', statusW)}
-            </Text>
-          )}
-          {open.flatMap((i, n) => row(i, n === 0))}
-          {kept.length > 0 && (
-            <Button key="kept" plain onPress={() => setView($, { showKept: !v.showKept })}>
-              <Text dimColor>{v.showKept ? '▾' : '▸'} Kept global ({kept.length})</Text>
-            </Button>
-          )}
-          {v.showKept && kept.flatMap((i, n) => row(i, open.length === 0 && n === 0))}
-          {logLines}
-        </Box>
-      )
-    }
-
-    // Columns sum to W exactly: marker 2, name, summary (wide only), on in 6, to do 10.
-    const cNameW = Math.min(16, Math.max(8, ...snap.kits.map(c => c.name.length + 1)))
-    const sumW = wide ? W - 18 - cNameW : 0
-    const cNameCol = wide ? cNameW : W - 18
-
-    const kitDetail = (c: KitRow) => {
-      const pending = pendingOf(c)
-      return (
-        // The actions first, with what Adopt would do; then the parts, and the projects with how to toggle them.
-        <Box key={`detail:${c.name}`} flexDirection="column" paddingLeft={4} marginBottom={1}>
-          {kitActions(c)}
-          {c.globals.length > 0 && (
-            <Text color="yellow">Still installed globally: {c.globals.join(', ')}. Adopt enables {c.name} where it was used, then removes the global{c.globals.length > 1 ? 's' : ''}.</Text>
-          )}
-          {c.globals.length === 0 && pending > 0 && (
-            <Text color="yellow">Used but off in {plural(pending, 'project')}: Adopt enables it there.</Text>
-          )}
-          {sumW === 0 && <Text>{c.summary}</Text>}
-          {c.parts.map(line => line.startsWith('runs: ')
-            ? <Text>· {line}</Text>
-            : <Text dimColor wrap="truncate-end">· {line}</Text>)}
-          <Text dimColor>From a shell: cc-{c.name} · cc-{c.name}-off</Text>
-          {c.projects.length === 0 && <Text dimColor>Not enabled or used anywhere yet.</Text>}
-          {c.projects.length > 0 && <Text dimColor>Enter on a project turns {c.name} on or off there.</Text>}
-          {c.projects.map(pr => {
-            const mark = pr.status === 'on' ? '✓' : pr.status === 'partial' ? '◐' : '+'
-            const tag = pr.status === 'on' ? (stale(pr) ? 'stale' : '') : pr.status === 'partial' ? 'partial' : 'used, off'
-            const toOff = pr.status === 'on'
-            return (
-              <Button key={`proj:${c.name}:${pr.project}`} plain
-                onPress={run(`${toOff ? 'Removing' : 'Enabling'} ${c.name}…`, () => toggleKit($, opts, c, pr.project, toOff, home))}>
-                <Text color={pr.status === 'on' ? 'green' : 'yellow'}>{mark} </Text>
-                {fit(shortPath(pr.project, home), W - 29)}{' '}
-                <Text dimColor>{fit(count(pr.n), 6)}{fit(ago(pr.last, now), 6)}</Text>
-                <Text color="yellow">{tag}</Text>
-              </Button>
-            )
-          })}
-        </Box>
-      )
-    }
-
-    return (
-      <Box flexDirection="column">
-        {header}
-        {rule}
-        {snap.kits.length === 0 && <Text dimColor>No kits yet. Press m on an unsorted global, or t to triage them all with Claude.</Text>}
-        {snap.kits.length > 0 && (
-          <Text dimColor>{'  '}{fit('kit', cNameCol)}{sumW ? fit('what', sumW) : ''}{fit('on in', 6)}to do</Text>
-        )}
-        {snap.kits.flatMap((c, n) => {
-          const isSel = c.name === selKit?.name
-          const pending = pendingOf(c)
-          const staleN = c.projects.filter(stale).length
-          const onN = c.projects.filter(pr => pr.status === 'on').length
-          // Verbs that match the open row's actions: o Adopt, Enter on a project, p Prune.
-          const todo = c.globals.length ? 'adopt' : pending ? `turn on ${pending}` : staleN ? `prune ${staleN}` : ''
-          return [
-            <Button key={`kit:${c.name}`} plain autoFocus={n === 0 ? true : undefined} onPress={toggle(c.name)}>
-              <Text bold>{isSel ? '› ' : '  '}</Text>
-              <Text bold>{fit(c.name, cNameCol - 1)} </Text>
-              <Text dimColor>{sumW ? `${fit(c.summary, sumW - 1)} ` : ''}</Text>
-              <Text dimColor={onN === 0}>{fit(onN ? String(onN) : '—', 6)}</Text>
-              <Text color="yellow">{clip(todo, 10)}</Text>
-            </Button>,
-            isSel ? kitDetail(c) : null,
-          ]
-        })}
-        {logLines}
-      </Box>
-    )
-  })
+  // One pane, drawn in the mode the person last switched it to.
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
+    (await read($, mode)) === 'advanced' ? drawAdvanced($, e, opts) : drawLocal($, e, opts))
 }
 
 function auditText(snap: Snapshot, home: string, staleDays: number): string {

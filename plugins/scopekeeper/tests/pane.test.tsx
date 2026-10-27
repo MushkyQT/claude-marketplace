@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { On, UiFocusResult } from 'claude-code'
 
-import type { Snapshot, View } from '../types'
+import type { Mode, Snapshot, View } from '../types'
 
 const DAY = 86_400_000
 const NOW = 2_000_000_000_000
@@ -46,7 +46,7 @@ const SNAP: Snapshot = {
 const PANE = {
   plugin: 'scopekeeper',
   component: 'Pane',
-  requestId: 'scopekeeper-advanced',
+  requestId: 'scopekeeper',
   props: {
     title: 'Scope',
     isFocused: true,
@@ -60,10 +60,11 @@ const PANE = {
 const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 
 /** Serves the pane's state from a map the test seeds, and records what the mod writes. */
-function seed(on: On, snap: Snapshot | undefined, view?: View) {
+function seed(on: On, snap: Snapshot | undefined, view?: View, mode: Mode = 'local') {
   const state: Record<string, unknown> = {
     snapshot: snap && { shape: 'snap-4', value: snap },
     view: view && { shape: 'view-3', value: view },
+    mode,
   }
   let version = 1
   on('state.get', (_, e) => ({ value: { value: state[e.key], version } }))
@@ -83,7 +84,7 @@ const rowTexts = async (ui: { findAll: (q: { type: string }) => Promise<{ key: s
 // ---- the advanced pane: every global and every kit, across projects
 
 test('the globals tab lists unsorted installs first, on every surface', async ($, on) => {
-  seed(on, SNAP)
+  seed(on, SNAP, undefined, 'advanced')
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...PANE, surface })
     expect(await ui.find({ type: 'Text', text: /1 unsorted · 1 to adopt/ })).toBeDefined()
@@ -96,14 +97,14 @@ test('the globals tab lists unsorted installs first, on every surface', async ($
 })
 
 test('before the first scan the pane says so', async ($, on) => {
-  seed(on, undefined)
+  seed(on, undefined, undefined, 'advanced')
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect((await ui.find({ type: 'Text' }))?.text).toBe('Scanning your setup…')
   await ui.unmount()
 })
 
 test('every action is a plain Button, so the terminal draws its hotkey', async ($, on) => {
-  seed(on, SNAP, { tab: 'globals', selected: 'skill:improve', showKept: false })
+  seed(on, SNAP, { tab: 'globals', selected: 'skill:improve', showKept: false }, 'advanced')
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   for (const [key, hotkey] of [['tab-globals', 'g'], ['tab-kits', 'i'], ['rescan', 'r'], ['act-make', 'm'], ['act-keep', 'k'], ['act-remove', 'x']]) {
     const button = await ui.find({ key: key! })
@@ -114,7 +115,7 @@ test('every action is a plain Button, so the terminal draws its hotkey', async (
 })
 
 test('nothing starts open; an open row shows its details right under it', async ($, on) => {
-  const state = seed(on, SNAP)
+  const state = seed(on, SNAP, undefined, 'advanced')
   const closed = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await closed.find({ key: 'detail:skill:improve' })).toBe(undefined)
   await closed.unmount()
@@ -131,9 +132,9 @@ test('nothing starts open; an open row shows its details right under it', async 
 })
 
 test('moving the ring opens nothing; Enter opens the row', async ($, on) => {
-  const state = seed(on, SNAP)
+  const state = seed(on, SNAP, undefined, 'advanced')
   // Rows that opened under the ring shifted the rows below it, so the arrows skipped them.
-  await $.ui.focus({ component: 'Pane', requestId: 'scopekeeper-advanced', plugin: 'scopekeeper', element: 'item:mcp:blender', origin: { kind: 'person' } })
+  await $.ui.focus({ component: 'Pane', requestId: 'scopekeeper', plugin: 'scopekeeper', element: 'item:mcp:blender', origin: { kind: 'person' } })
   expect(state.view).toBe(undefined)
   const first = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await first.press({ key: 'item:mcp:blender' })
@@ -151,7 +152,7 @@ test('moving the ring opens nothing; Enter opens the row', async ($, on) => {
 })
 
 test('no row is wider than the pane', async ($, on) => {
-  const state = seed(on, SNAP)
+  const state = seed(on, SNAP, undefined, 'advanced')
   for (const width of [40, 62, 120]) {
     for (const tab of ['globals', 'kits'] as const) {
       state.view = { shape: 'view-3', value: { tab, selected: tab === 'kits' ? 'design' : '', showKept: true } }
@@ -165,7 +166,7 @@ test('no row is wider than the pane', async ($, on) => {
 })
 
 test('a kit just enabled is on, one unused for staleDays is stale', async ($, on) => {
-  seed(on, SNAP, { tab: 'kits', selected: 'design', showKept: false })
+  seed(on, SNAP, { tab: 'kits', selected: 'design', showKept: false }, 'advanced')
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   // ✓ already says on: the last cell only speaks for what needs a look.
   expect((await ui.find({ key: 'proj:design:/w/new' }))?.text.trimEnd().endsWith(' on')).toBe(false)
@@ -179,7 +180,7 @@ test('a kit just enabled is on, one unused for staleDays is stale', async ($, on
 })
 
 test('while history loads, counts are not shown as zero and nothing can be removed', async ($, on) => {
-  seed(on, { ...SNAP, backfilledAt: 0 }, { tab: 'globals', selected: 'skill:improve', showKept: false })
+  seed(on, { ...SNAP, backfilledAt: 0 }, { tab: 'globals', selected: 'skill:improve', showKept: false }, 'advanced')
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ key: 'act-remove' })).toBe(undefined)
   expect((await ui.find({ key: 'item:skill:improve' }))?.text.includes('…')).toBe(true)
@@ -189,12 +190,10 @@ test('while history loads, counts are not shown as zero and nothing can be remov
 
 // ---- the daily pane: this project, and what to make local
 
-const DAILY = { ...PANE, requestId: 'scopekeeper' } as const
-
 test('the daily pane shows whether each kit is on in this project', async ($, on) => {
   seed(on, SNAP)
   for (const surface of SURFACES) {
-    const ui = await $.ui.mount({ ...DAILY, surface })
+    const ui = await $.ui.mount({ ...PANE, surface })
     expect(await ui.find({ type: 'Text', text: 'app' })).toBeDefined()
     // The dot says on or off; the last cell only speaks for what needs a look.
     expect((await ui.find({ key: 'here:design' }))?.text.includes('●')).toBe(true)
@@ -210,7 +209,7 @@ test('the daily pane shows whether each kit is on in this project', async ($, on
 
 test('a kit used here but off comes first, with one key to turn it on', async ($, on) => {
   seed(on, SNAP)
-  const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect((await rowTexts(ui, /^here:/))[0]!.includes('video')).toBe(true)
   expect(await ui.find({ key: 'detail:here:video' })).toBe(undefined)
   const button = await ui.find({ key: 'turn-on-used' })
@@ -223,8 +222,8 @@ test('a kit used here but off comes first, with one key to turn it on', async ($
   await ui.unmount()
 })
 
-test('a switches between local and advanced, one pane at a time', async ($, on) => {
-  seed(on, SNAP)
+test('a switches between local and advanced in the same pane, never closing it', async ($, on) => {
+  const state = seed(on, SNAP)
   const calls: string[] = []
   on('ui.open', (_, e) => {
     calls.push(`open ${e.id} ${e.title} ${e.focus}`)
@@ -234,22 +233,44 @@ test('a switches between local and advanced, one pane at a time', async ($, on) 
     calls.push(`close ${e.id}`)
     return { value: undefined }
   })
-  const local = await $.ui.mount({ ...DAILY, surface: 'terminal' })
+  const local = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await local.press({ key: 'advanced' })
   await local.unmount()
-  expect(calls).toEqual(['close scopekeeper', 'open scopekeeper-advanced Scope · all projects true'])
+  expect(state.mode).toBe('advanced')
+  expect(calls).toEqual(['open scopekeeper Scope · all projects true'])
   calls.length = 0
   const advanced = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await advanced.find({ key: 'tab-globals' })).toBeDefined()
   expect((await advanced.find({ key: 'local' }))?.props.hotkey).toBe('a')
   await advanced.press({ key: 'local' })
   await advanced.unmount()
-  expect(calls).toEqual(['close scopekeeper-advanced', 'open scopekeeper Scope · Local true'])
+  expect(state.mode).toBe('local')
+  expect(calls).toEqual(['open scopekeeper Scope · Local true'])
+})
+
+test('after a question the pane that held the keys takes them back', async ($, on) => {
+  const state = seed(on, SNAP)
+  const calls: string[] = []
+  on('ui.panes', () => ({ value: [{ id: 'scopekeeper', title: 'Scope · Local', isShown: true, isFocused: true, isPlaced: true }] }))
+  on('tool.call', { tool: 'AskUserQuestion' }, () => {
+    calls.push('ask')
+    return { deny: 'test' }
+  })
+  on('ui.open', (_, e) => {
+    calls.push(`open ${e.id} ${e.title} ${e.focus}`)
+    return { value: { isPlaced: true } }
+  })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'here:video' })
+  await ui.unmount()
+  expect(calls).toEqual(['ask', 'open scopekeeper Scope · Local true'])
+  expect(state.mode).toBe('local')
 })
 
 test('the header shows the project path once, and the globals counts sit on one line', async ($, on) => {
   const state = seed(on, SNAP)
   state.log = ['Enabled design in ~/app.', 'Cancelled.', '']
-  const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: '~/' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Globals: 1 always on · 3 to make local · 1 never used$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /always loaded/ })).toBe(undefined)
@@ -264,13 +285,13 @@ test('moving onto a suggestion opens nothing; Enter opens it with make local and
   // Details that opened under the ring shifted the rows below it, so the arrows skipped them.
   await $.ui.focus({ component: 'Pane', requestId: 'scopekeeper', plugin: 'scopekeeper', element: 'sug:mcp:godot-ai plugin:godot-kit', origin: { kind: 'person' } })
   expect(state.pick).toBe('sug:mcp:godot-ai plugin:godot-kit')
-  const closed = await $.ui.mount({ ...DAILY, surface: 'terminal' })
+  const closed = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await closed.find({ key: 'act-local' })).toBe(undefined)
   expect(await closed.find({ type: 'Text', text: 'Enter: Open' })).toBeDefined()
   await closed.press({ key: 'sug:mcp:godot-ai plugin:godot-kit' })
   await closed.unmount()
   expect(state.opened).toBe('sug:mcp:godot-ai plugin:godot-kit')
-  const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect((await ui.find({ key: 'sug:mcp:godot-ai plugin:godot-kit' }))?.text.startsWith('›')).toBe(true)
   expect((await ui.find({ key: 'act-local' }))?.text).toBe('Make local')
   expect((await ui.find({ key: 'act-local' }))?.props.hotkey).toBe('l')
@@ -284,7 +305,7 @@ test('moving onto a suggestion opens nothing; Enter opens it with make local and
   // A bundle holding skills is set up by Claude, which works out where they come from.
   state.opened = 'sug:skill:improve'
   await ui.unmount()
-  const again = await $.ui.mount({ ...DAILY, surface: 'terminal' })
+  const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect((await again.find({ key: 'act-local' }))?.text).toBe('Make local with Claude')
   expect(await again.find({ type: 'Text', text: /1 never used/ })).toBeDefined()
   await again.unmount()
@@ -292,7 +313,7 @@ test('moving onto a suggestion opens nothing; Enter opens it with make local and
 
 test('with every global unused, the daily pane does not say there is nothing to split', async ($, on) => {
   seed(on, { ...SNAP, kits: [], bundles: [], everywhere: [], unused: ['skill:a', 'skill:b'] })
-  const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /Nothing to split/ })).toBe(undefined)
   expect(await ui.find({ type: 'Text', text: /2 globals never used: t lets Claude sort them/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /make one local below/ })).toBe(undefined)
@@ -301,14 +322,14 @@ test('with every global unused, the daily pane does not say there is nothing to 
 
 test('a kits.json that does not parse is named in the daily pane', async ($, on) => {
   seed(on, { ...SNAP, problems: ['~/.claude/scopekeeper/kits.json does not parse (x): fix it by hand'] })
-  const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /kits.json does not parse/ })).toBeDefined()
   await ui.unmount()
 })
 
 test('outside a project the daily pane only offers what to make local', async ($, on) => {
   seed(on, { ...SNAP, cwdProject: '' })
-  const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ key: 'here:design' })).toBe(undefined)
   expect(await ui.find({ key: 'sug:skill:improve' })).toBeDefined()
   expect(await ui.find({ key: 'detail:sug:skill:improve' })).toBe(undefined)
@@ -320,7 +341,7 @@ test('no daily row is wider than the pane', async ($, on) => {
   for (const width of [30, 40, 56, 120]) {
     for (const pick of ['here:design', 'sug:skill:improve', 'sug:everywhere']) {
       state.opened = pick
-      const ui = await $.ui.mount({ ...DAILY, props: { ...DAILY.props, bodyColumns: width }, surface: 'terminal' })
+      const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: width }, surface: 'terminal' })
       const rows = await rowTexts(ui, /^(here|sug):/)
       expect(rows.length).toBe(6)
       for (const row of rows) expect(row.length <= width, `${width}: "${row}"`).toBe(true)
@@ -342,13 +363,14 @@ test('each view explains itself until h hides it, and hidden stays hidden', asyn
     stored[e.key] = e.value
     return { value: undefined }
   })
-  for (const [mount, view, text] of [
-    [DAILY, 'local', /^Load tools only/],
-    [PANE, 'globals', /^  new: unsorted/],
-    [{ ...PANE, requestId: 'scopekeeper-advanced' }, 'kits', /^A kit is a group of tools/],
+  for (const [mode, view, text] of [
+    ['local', 'local', /^Load tools only/],
+    ['advanced', 'globals', /^  new: unsorted/],
+    ['advanced', 'kits', /^A kit is a group of tools/],
   ] as const) {
+    state.mode = mode
     if (view === 'kits') state.view = { shape: 'view-3', value: { tab: 'kits', selected: '', showKept: false } }
-    const ui = await $.ui.mount({ ...mount, surface: 'terminal' })
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await ui.find({ type: 'Text', text }), view).toBeDefined()
     const help = await ui.find({ key: 'help' })
     expect(help?.props.hotkey).toBe('h')
@@ -356,7 +378,7 @@ test('each view explains itself until h hides it, and hidden stays hidden', asyn
     await ui.press({ key: 'help' })
     await ui.unmount()
     expect((state.helpHidden as string[]).includes(view), view).toBe(true)
-    const again = await $.ui.mount({ ...mount, surface: 'terminal' })
+    const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await again.find({ type: 'Text', text }), view).toBe(undefined)
     expect((await again.find({ key: 'help' }))?.text).toBe('Help')
     await again.unmount()
@@ -366,15 +388,16 @@ test('each view explains itself until h hides it, and hidden stays hidden', asyn
 
 test('every help line, and the globals count under the lists, fits the pane at the width it opens at', async ($, on) => {
   const state = seed(on, SNAP)
-  for (const [mount, tab, width] of [[DAILY, 'globals', 56], [PANE, 'globals', 64], [PANE, 'kits', 64]] as const) {
+  for (const [mode, tab, width] of [['local', 'globals', 56], ['advanced', 'globals', 64], ['advanced', 'kits', 64]] as const) {
+    state.mode = mode
     state.view = { shape: 'view-3', value: { tab, selected: '', showKept: false } }
-    const ui = await $.ui.mount({ ...mount, props: { ...mount.props, bodyColumns: width }, surface: 'terminal' })
+    const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: width }, surface: 'terminal' })
     // The box's border and padding take 4 columns.
     const help = (await ui.findAll({ type: 'Box' })).filter(b => /^help:/.test(b.key ?? ''))
     expect(help.length > 0).toBe(true)
     for (const line of help) expect(line.text.length <= width - 4, `${width}: "${line.text}"`).toBe(true)
     const count = await ui.find({ type: 'Text', text: /^Globals: / })
-    if (mount === DAILY) expect((count?.text.length ?? Infinity) <= width, `"${count?.text}"`).toBe(true)
+    if (mode === 'local') expect((count?.text.length ?? Infinity) <= width, `"${count?.text}"`).toBe(true)
     await ui.unmount()
   }
 })

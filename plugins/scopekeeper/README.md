@@ -51,7 +51,7 @@ Both panes put their keys in the same place, one row under the header: `a` switc
 
 ### The advanced pane
 
-Only one of the two panes is open at a time: switching closes the other.
+Local and advanced are two modes of one pane: `a` redraws it in place, so it keeps its seat (beside the transcript, or above the prompt on a narrower terminal) and the keyboard. A question an action asks gives the keys back to the pane once answered.
 
 Tab or the arrows move through the rows without changing them; Enter opens one in place, its actions first and its details under them, and Enter again closes it; nothing starts open, so the arrows always land on the next line you see. `g`/`i` switch tabs, `a` goes back to the local pane, `r` rescans, `t` triages. **Globals** tab: every user-scope install with calls, last use, project count and its status (`new`, `keep`, or the kit covering it). On a global: `k` keep global (`u` to undo), `m` make a kit with Claude, `x` remove, `o` adopt its kit. **Kits** tab: each kit, how many projects it is on in, and what to do next (`adopt`, `turn on N` where it was used but is off, `prune N` stale). On a kit: Enter on a project toggles it, `o` adopts, `e` enables it in the current project, `p` prunes it from the projects where it went stale.
 

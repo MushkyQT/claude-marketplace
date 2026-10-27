@@ -76,11 +76,15 @@ export type Snapshot = {
 
 export type View = { tab: 'globals' | 'kits'; selected: string; showKept: boolean }
 
+/** What the pane shows: this project (local), or every global and kit across projects (advanced). */
+export type Mode = 'local' | 'advanced'
+
 declare module 'claude-code' {
   interface PluginState {
     scopekeeper: {
       snapshot: Shaped<Snapshot | null>
       view: Shaped<View>
+      mode: Mode
       /** The element under the focus ring in the open pane: it only names what Enter does there. */
       pick: string
       /** The suggestion opened with Enter in the local pane. */
