@@ -8,9 +8,13 @@ Keep your global Claude Code setup lean. scopekeeper shows every plugin, skill, 
 - **Spots what belongs together.** Globals used in the same sessions, named alike (`remotion-*`), or used in the same projects are grouped into one suggested kit. Globals you use in most projects are offered to keep global.
 - **Speaks for the project you are in.** A row just above the prompt shows this project's kits as lights: `● vercel  ○ remotion`. `●` on (green, dimmed when it went unused for the stale period), `◐` partly on and `○` used here but off (yellow); names keep your theme's text color. Hover a light that is not plainly on for a short line after the lights saying why: what is missing, when you last used it, or how long it sat idle. Kits never used here stay out, and past four lights the ones not fully on stay, then the idle ones. Click a light to turn that kit on or off in this project; it asks first, as Enter does in the pane. With no kits here the row is not drawn; it gives way to Claude Code's surveys, and `[-]` beside it collapses it.
 - **Turns globals into kits.** A kit lists its parts: plugins (`name@marketplace`), MCP servers (their JSON), skills copied from a git repo, or a project installer command (like `npx impeccable install --project`). scopekeeper generates `cc-<kit>` and `cc-<kit>-off` for each.
-- **Adopts a kit in one press.** Enables it in every project where you used it, checks it took, then removes the global install (skills and agents are moved to a backup, never deleted).
+- **Adopts a kit in one press.** Enables it in every project where you used it, checks every part took, then removes the global installs one at a time (skills and agents are moved to a backup, never deleted). If any part is missing anywhere, the globals stay.
+- **Takes effect right away.** A kit turned on or off in the project you are in, or a global removed, reloads plugins in this session once it is idle. Other open sessions in that project still need `/reload-plugins`.
+- **Lets Claude offer a kit.** At the start of each conversation Claude is told which of your kits are not on in this project, a line each. When a request needs one, Claude can turn it on with the `enable_kit` tool, after you confirm, as with Enter in the pane.
 
-Everything it enables stays out of git: plugins and MCP servers at local scope, copied files listed in `.git/info/exclude`.
+Everything it enables stays out of git: plugins and MCP servers at local scope, copied files listed in `.git/info/exclude`. In a git worktree, kits are turned on in the worktree itself, while usage counts toward the main checkout.
+
+Turning a kit off removes only what it put there: for skills from a git repo, the folders named in its clone, so a skill of your own with a similar name stays. Installer paths must name what they write under `.claude/` (`.claude/skills/impeccable`, `.claude/agents/impeccable-*`); a path like `*` or `.claude/skills/*` is refused when the kit is saved.
 
 ## Install
 
@@ -57,9 +61,11 @@ From a shell, `cc-<kit>` and `cc-<kit>-off` work in any project folder once your
 
 ## Files
 
-- `~/.claude/scopekeeper/kits.json`: your kits and keep-globals, editable by hand. A `combos.json` from before 0.5 is read once, saved here, and moved to `backups/`.
+- `~/.claude/scopekeeper/kits.json`: your kits and keep-globals, editable by hand. If an edit leaves it unreadable, the panes say so and nothing is saved over it until you fix it; the version before each save is kept as `backups/kits.json.prev`. A kit that fails validation is left out of `cc.sh`, and the panes name it. A `combos.json` from before 0.5 is read once, saved here, and moved to `backups/`.
 - `~/.claude/scopekeeper/cc.sh`: the generated functions (bash and zsh). Overwritten when kits change.
 - `~/.claude/scopekeeper/backups/`: settings, `~/.claude.json`, and any skill or agent folder taken out of the global scope.
+
+`kits.json` and `cc.sh` can hold an MCP server's env and headers, copied from `~/.claude.json`, so they are readable by you only (`600`, the folder `700`).
 - `~/.claude/skill-library/`: clones that git-skills kits copy from.
 
 `CLAUDE_CONFIG_DIR` is honoured. Options (`/config`): days a kit may sit unused in a project, counted from its last use or from when it was enabled, before it counts as stale (default 30), and a single rc file to use instead of the ones picked from `$SHELL`.

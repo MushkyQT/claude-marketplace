@@ -3,9 +3,9 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Bundle, KitProject, KitRow, GlobalItem, ItemRow, Snapshot, View } from '../types'
 import {
-  EMPTY_REGISTRY, addUse, ago, claimOf, classify, clip, coUse, kitUsage, count, day, fit, generateScript,
-  isStale, matchesAny, mcpServerOf, partLine, partSummary, plural, pluginName, rcCandidates, rcLineFor,
-  band, rcPlan, shortPath, suggest, trimSessions, validateKit,
+  addUse, ago, claimOf, classify, clip, coUse, kitUsage, count, day, fit, generateScript, invalidKits,
+  isStale, kitsContext, matchesAny, mcpServerOf, mergeLedger, mergeSessions, partLine, partSummary, plural,
+  pluginName, rcCandidates, rcLineFor, band, rcPlan, shortPath, skillsSource, suggest, trimSessions, validateKit,
 } from './core'
 import type { Kit, Ledger, Part, Registry, Sessions, UsageEvent } from './core'
 
@@ -80,10 +80,33 @@ async function readJson<T>($: $T, path: string, fallback: T): Promise<T> {
 
 // ---------------------------------------------------------------- registry
 
+/** Why kits.json could not be read, when it exists but does not parse: nothing is saved over it until it is fixed. */
+let registryError = ''
+
 async function loadRegistry($: $T, p: Paths): Promise<Registry> {
-  if (!(await $.fs.exists(p.registry)) && (await $.fs.exists(p.legacyRegistry))) return migrateRegistry($, p)
-  const reg = await readJson<Registry>($, p.registry, EMPTY_REGISTRY)
-  return { version: 1, keepGlobal: reg.keepGlobal ?? [], kits: reg.kits ?? {} }
+  if (!(await $.fs.exists(p.registry))) {
+    registryError = ''
+    if (await $.fs.exists(p.legacyRegistry)) return migrateRegistry($, p)
+    return { version: 1, keepGlobal: [], kits: {} }
+  }
+  let reg: Partial<Registry>
+  try {
+    reg = JSON.parse(await $.fs.read(p.registry)) as Partial<Registry>
+    if (!reg || typeof reg !== 'object' || Array.isArray(reg)) throw new Error('not a JSON object')
+    registryError = ''
+  } catch (error) {
+    registryError = `${shortPath(p.registry, p.home)} does not parse (${String(error).slice(0, 120)}): fix it by hand; nothing is saved over it until then`
+    reg = {}
+  }
+  return { version: 1, keepGlobal: [...(reg.keepGlobal ?? [])], kits: { ...(reg.kits ?? {}) } }
+}
+
+/** kits.json and cc.sh may hold MCP secrets (env, headers): only the person reads them. */
+async function lockDown($: $T, p: Paths): Promise<void> {
+  await $.process.run(['chmod', '700', p.dir]).catch(() => undefined)
+  for (const file of [p.registry, p.script]) {
+    if (await $.fs.exists(file)) await $.process.run(['chmod', '600', file]).catch(() => undefined)
+  }
 }
 
 /** combos.json, from before kits had their name: saved again as kits.json, the old file kept in backups. */
@@ -97,8 +120,15 @@ async function migrateRegistry($: $T, p: Paths): Promise<Registry> {
 }
 
 async function saveRegistry($: $T, p: Paths, reg: Registry): Promise<void> {
+  if (registryError) throw new Error(registryError)
+  // The last good kits.json, should a save go wrong.
+  if (await $.fs.exists(p.registry)) {
+    await $.process.run(['mkdir', '-p', `${p.dir}/backups`])
+    await $.process.run(['cp', p.registry, `${p.dir}/backups/kits.json.prev`]).catch(() => undefined)
+  }
   await $.fs.write(p.registry, `${JSON.stringify(reg, null, 2)}\n`)
   await $.fs.write(p.script, generateScript(reg, p.libRoot))
+  await lockDown($, p)
 }
 
 /** The startup files that do not load cc.sh yet. */
@@ -135,8 +165,15 @@ async function ensureRc($: $T, p: Paths): Promise<boolean> {
 
 let ledger: Ledger | undefined
 let sessions: Sessions | undefined
+// What this session recorded since the last flush. Other sessions write the store too, so a flush
+// adds these onto a fresh read rather than writing this session's copy over theirs.
+let pendingUse: Ledger = {}
+let pendingSessions: Sessions = {}
 let flushTimer: { cancel: () => void } | undefined
+/** The project usage is counted under: a git project's main checkout, worktrees folded in. */
 let sessionProject: string | undefined
+/** Where kits are turned on for this session: the checkout (worktree included) the session runs in. */
+let sessionTarget: string | undefined
 let sessionId: string | undefined
 let knownPlugins: string[] = []
 let knownKeys: string[] = []
@@ -151,12 +188,35 @@ async function loadSessions($: $T): Promise<Sessions> {
   return sessions
 }
 
+const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+
+/** Adds this session's pending uses onto what the store holds now, and reads back the merged whole. */
+async function flushUsage($: $T): Promise<void> {
+  const use = pendingUse
+  const used = pendingSessions
+  pendingUse = {}
+  pendingSessions = {}
+  try {
+    const stored = ((await $.store.get('usage')) as Ledger | undefined) ?? {}
+    await $.store.set('usage', mergeLedger(stored, use))
+    const storedSessions = ((await $.store.get('sessions')) as Sessions | undefined) ?? {}
+    const merged = trimSessions(mergeSessions(storedSessions, used))
+    await $.store.set('sessions', merged)
+    // Keep what was recorded while the store was being read.
+    ledger = mergeLedger(copy(stored), pendingUse)
+    sessions = mergeSessions(copy(merged), pendingSessions)
+  } catch {
+    // Not written: kept for the next flush.
+    pendingUse = mergeLedger(use, pendingUse)
+    pendingSessions = mergeSessions(used, pendingSessions)
+  }
+}
+
 function scheduleFlush($: $T): void {
   if (flushTimer) return
   flushTimer = $.clock.after(5000, async () => {
     flushTimer = undefined
-    if (ledger) await $.store.set('usage', ledger)
-    if (sessions) await $.store.set('sessions', sessions)
+    await flushUsage($)
   })
 }
 
@@ -184,11 +244,14 @@ function record($: $T, use: UsageEvent): void {
   void (async () => {
     const now = await $.clock.now()
     addUse(ledger!, key, sessionProject!, now)
+    addUse(pendingUse, key, sessionProject!, now)
     // Installs used in the same sessions belong together: keep what this one used.
     if (sessionId && sessions) {
-      const cur = (sessions[sessionId] ??= { at: now, keys: [] })
-      cur.at = now
-      if (!cur.keys.includes(key)) cur.keys.push(key)
+      for (const into of [sessions, pendingSessions]) {
+        const cur = (into[sessionId] ??= { at: now, keys: [] })
+        cur.at = now
+        if (!cur.keys.includes(key)) cur.keys.push(key)
+      }
     }
     scheduleFlush($)
   })()
@@ -220,8 +283,8 @@ async function backfill($: $T, p: Paths): Promise<string> {
     const root = key ? await projectRoot($, cwd) : null
     if (key && root) addUse(fresh, key, root, last, n)
   }
-  // Backfill replaces what it covers; live use recorded since stays on top.
-  const live = await loadLedger($)
+  // Backfill replaces what it covers; live use recorded since stays on top. Read fresh: other sessions write too.
+  const live = ((await $.store.get('usage')) as Ledger | undefined) ?? {}
   for (const [key, byProject] of Object.entries(fresh)) {
     for (const [project, use] of Object.entries(byProject)) {
       const cur = live[key]?.[project]
@@ -229,13 +292,15 @@ async function backfill($: $T, p: Paths): Promise<string> {
     }
   }
   await $.store.set('usage', live)
-  const known = await loadSessions($)
+  ledger = mergeLedger(copy(live), pendingUse)
+  const found: Sessions = {}
   for (const [id, at, uses] of used) {
     const keys = uses.flatMap(([kind, name]) => classify({ kind, name }, knownPlugins, k => matchesAny(k, knownKeys)) ?? [])
-    if (keys.length) known[id] = { at: Math.max(at, known[id]?.at ?? 0), keys: [...new Set([...(known[id]?.keys ?? []), ...keys])] }
+    if (keys.length) found[id] = { at, keys }
   }
-  sessions = trimSessions(known)
-  await $.store.set('sessions', sessions)
+  const known = trimSessions(mergeSessions(((await $.store.get('sessions')) as Sessions | undefined) ?? {}, found))
+  await $.store.set('sessions', known)
+  sessions = mergeSessions(copy(known), pendingSessions)
   await $.store.set('backfilledAt', now)
   // The ledger keeps what transcripts since deleted held, so the window only grows.
   const oldest = since || now
@@ -299,7 +364,7 @@ async function inventory($: $T, p: Paths, reg: Registry) {
 }
 
 async function partOn(
-  $: $T, part: Part, project: string, installed: Installed, global: GlobalJson,
+  $: $T, p: Paths, part: Part, project: string, installed: Installed, global: GlobalJson,
 ): Promise<boolean> {
   switch (part.kind) {
     case 'plugin':
@@ -311,6 +376,10 @@ async function partOn(
     }
     case 'git-skills': {
       const names = (await $.fs.list(`${project}/.claude/skills`).catch(() => [])).map(e => e.name)
+      // The clone says which folders are the kit's: a skill of the person's own named alike is not it.
+      const theirs = (await $.fs.list(skillsSource(part, p.libRoot)).catch(() => []))
+        .map(e => e.name).filter(n => !n.startsWith('.') && matchesAny(n, [part.match]))
+      if (theirs.length) return theirs.every(n => names.includes(n))
       return names.some(n => matchesAny(n, [part.match]))
     }
     case 'installer': {
@@ -323,6 +392,14 @@ async function partOn(
       return true
     }
   }
+}
+
+/** The parts of a kit that are not in the wanted state in one project, read from disk now. */
+async function partsNot($: $T, p: Paths, kit: Kit, project: string, wantOn: boolean): Promise<string[]> {
+  const installed = (await readJson<{ plugins?: Installed }>($, `${p.cfg}/plugins/installed_plugins.json`, {})).plugins ?? {}
+  const global = await readJson<GlobalJson>($, p.globalJson, {})
+  const states = await Promise.all(kit.parts.map(part => partOn($, p, part, project, installed, global)))
+  return kit.parts.filter((_, i) => states[i] !== wantOn).map(partSummary)
 }
 
 /** Projects worth offering: not home, not a folder that only holds other projects. */
@@ -357,11 +434,21 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
     return byProject
   }
 
+  // This session's project counts even before anything was used in it, so its kits can be turned on.
   const allProjects = [...new Set([
     ...Object.values(usage).flatMap(Object.keys),
     ...Object.values(installed).flatMap(es => es.flatMap(e => (e.projectPath ? [e.projectPath] : []))),
+    ...Object.entries(global.projects ?? {}).flatMap(([pr, c]) => (Object.keys(c.mcpServers ?? {}).length ? [pr] : [])),
+    ...(sessionProject ? [sessionProject] : []),
+    ...(sessionTarget ? [sessionTarget] : []),
   ])]
   const ok = new Set(await eligible($, p, allProjects))
+  // In a worktree, kits are turned on in the worktree, while use is counted under the main checkout.
+  const cwdProject = sessionTarget && ok.has(sessionTarget) ? sessionTarget
+    : sessionProject && ok.has(sessionProject) ? sessionProject : ''
+  const cwdUsage = sessionProject && ok.has(sessionProject) ? sessionProject : cwdProject
+  const useIn = (used: Map<string, { n: number; last: number }>, project: string) =>
+    used.get(project) ?? (project === cwdProject && cwdUsage !== cwdProject ? used.get(cwdUsage) : undefined)
 
   const rows: ItemRow[] = items.map(item => {
     const uses = [...usesOf([item.id])].filter(([pr]) => ok.has(pr))
@@ -376,9 +463,9 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
     const used = usesOf(kitUsage(kit))
     const projects: KitProject[] = []
     for (const project of [...ok]) {
-      const states = await Promise.all(kit.parts.map(part => partOn($, part, project, installed, global)))
+      const states = await Promise.all(kit.parts.map(part => partOn($, p, part, project, installed, global)))
       const on = states.filter(Boolean).length
-      const use = used.get(project)
+      const use = useIn(used, project)
       const key = onKey(name, project)
       if (on === 0 && key in onSince) {
         delete onSince[key]
@@ -410,7 +497,9 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
   }
   if (onSinceChanged) await $.store.set('onSince', onSince)
 
-  if (!(await $.fs.exists(p.script)) && Object.keys(reg.kits).length) await saveRegistry($, p, reg)
+  if (registryError) problems.push(registryError)
+  for (const bad of invalidKits(reg)) problems.push(`kit ${bad.name} has no cc-* functions: ${bad.errors.join('; ')}`)
+  if (!registryError && !(await $.fs.exists(p.script)) && Object.keys(reg.kits).length) await saveRegistry($, p, reg)
   const missing = await rcMissing($, p)
   const isRc = missing.length === 0
   if (Object.keys(reg.kits).length) {
@@ -420,14 +509,14 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
   const backfillProblem = String((await $.store.get('backfillProblem')) ?? '')
   if (backfillProblem) problems.push(backfillProblem)
 
-  const cwdProject = sessionProject && ok.has(sessionProject) ? sessionProject : ''
   return {
     scannedAt: now,
     home: p.home,
     cwdProject,
+    ...(cwdUsage !== cwdProject ? { cwdUsage } : {}),
     items: rows,
     kits: kits.sort((a, b) => a.name.localeCompare(b.name)),
-    ...suggest(rows, coUse(await loadSessions($)), cwdProject),
+    ...suggest(rows, coUse(await loadSessions($)), cwdUsage),
     backfilledAt: Number((await $.store.get('backfilledAt')) ?? 0),
     historySince: Number((await $.store.get('historySince')) ?? 0),
     historyProblem: backfillProblem,
@@ -455,6 +544,10 @@ function usedOffHere(c: KitRow, project: string): boolean {
   const pr = statusIn(c, project)
   return pr !== undefined && pr.status !== 'on' && pr.n > 0
 }
+
+/** The session's first scan, which the once-per-conversation context waits on briefly. */
+let resolveFirstScan: (snap: Snapshot | null) => void = () => undefined
+const firstScan = new Promise<Snapshot | null>(resolve => { resolveFirstScan = resolve })
 
 async function rescan($: $T, opts: Opts): Promise<Snapshot> {
   const snap = await scan($, opts.rc)
@@ -528,17 +621,40 @@ async function removeGlobal($: $T, item: GlobalItem, backup: string): Promise<st
   return ran.exitCode === 0 ? undefined : `${item.id}: ${ran.stderr.trim().slice(0, 160)}`
 }
 
-async function enable($: $T, opts: Opts, name: string, project: string, off: boolean): Promise<string> {
+/**
+ * After a change that reaches this session (its own project, or the global scope), reloads plugins
+ * once the session is idle. Returns what to tell the person about open sessions.
+ */
+async function reloadAfter($: $T, touched: string[] | 'global'): Promise<string> {
+  const current = sessionTarget ?? sessionProject
+  const isHere = touched === 'global' || (current !== undefined && touched.includes(current))
+  const elsewhere = touched !== 'global' && touched.some(t => t !== current)
+  if (!isHere) return ' Run /reload-plugins there if a session is open.'
+  const canReload = (await $.command.list().catch(() => [])).some(c => c.name === 'reload-plugins')
+  if (!canReload) return ' Run /reload-plugins.'
+  // Detached: a hook the turn waits on (the enable_kit tool) may not run a command itself.
+  $.clock.after(0, () => {
+    void $.command.run({ command: 'reload-plugins', args: '' }).catch(() => $.ui.toast('scope: could not reload plugins: run /reload-plugins'))
+  })
+  return elsewhere ? ' Reloading plugins here; run /reload-plugins in other open sessions there.' : ' Reloading plugins.'
+}
+
+async function enable($: $T, opts: Opts, name: string, project: string, off: boolean, reload = true): Promise<string> {
   const p = await paths($, opts.rc)
   const reg = await loadRegistry($, p)
-  if (!reg.kits[name]) return `No kit named ${name}.`
+  const kit = reg.kits[name]
+  if (!kit) return `No kit named ${name}.`
+  const bad = validateKit(name, kit)
+  if (bad.length) return `${name} cannot run until kits.json is fixed: ${bad.join('; ')}`
   await saveRegistry($, p, reg)
   const { ok, out } = await runKit($, p, name, project, off)
   const where = shortPath(project, p.home)
-  if (ok) await markOn($, name, project, !off)
-  return ok
-    ? `${off ? 'Removed' : 'Enabled'} ${name} ${off ? 'from' : 'in'} ${where}. Run /reload-plugins there if a session is open.`
-    : `cc-${name}${off ? '-off' : ''} failed in ${where}: ${out}`
+  if (!ok) return `cc-${name}${off ? '-off' : ''} failed in ${where}: ${out}`
+  // The function's exit status is not the whole story: check the parts themselves.
+  const wrong = await partsNot($, p, kit, project, !off)
+  if (wrong.length) return `cc-${name}${off ? '-off' : ''} ran in ${where}, but ${wrong.join(', ')} ${off ? 'is still on' : 'is not on'}.`
+  await markOn($, name, project, !off)
+  return `${off ? 'Removed' : 'Enabled'} ${name} ${off ? 'from' : 'in'} ${where}.${reload ? await reloadAfter($, [project]) : ''}`
 }
 
 /** Enable a kit everywhere it was used, then take its parts out of the global scope. `answer` skips the question. */
@@ -566,19 +682,37 @@ async function adopt($: $T, opts: Opts, name: string, answer?: 'Adopt' | 'Only e
   const failed: string[] = []
   for (const project of targets) {
     await update($, busy, () => `Enabling ${name} in ${shortPath(project, p.home)}…`)
-    const { ok, out } = await runKit($, p, name, project, false)
-    if (ok) await markOn($, name, project, true)
-    else failed.push(`${shortPath(project, p.home)}: ${out}`)
+    // enable checks every part is on before it says Enabled.
+    const text = await enable($, opts, name, project, false, false)
+    if (!text.startsWith('Enabled')) failed.push(text)
   }
   if (failed.length) return `Enabled ${name} in ${targets.length - failed.length}/${targets.length}; kept the globals because some failed:\n${failed.join('\n')}`
-  if (answer !== 'Adopt' || !globals.length) return `Enabled ${name} in ${targets.length} project(s).`
+  if (answer !== 'Adopt' || !globals.length) return `Enabled ${name} in ${targets.length} project(s).${targets.length ? await reloadAfter($, targets) : ''}`
+
+  // The globals go only once every project the kit is on in really has it, read from disk again.
+  const kit = (await loadRegistry($, p)).kits[name]
+  const onIn = [...new Set([...targets, ...row.projects.filter(pr => pr.status === 'on').map(pr => pr.project)])]
+  const missing: string[] = []
+  for (const project of kit ? onIn : []) {
+    const off = await partsNot($, p, kit!, project, true)
+    if (off.length) missing.push(`${shortPath(project, p.home)}: ${off.join(', ')} not on`)
+  }
+  if (!kit || missing.length) return `Enabled ${name}, but kept the globals: ${kit ? missing.join('; ') : 'the kit is gone from kits.json'}`
 
   await update($, busy, () => `Removing ${name}'s global installs…`)
   const backup = await backupDir($, p)
-  const errors = (await Promise.all(globals.map(g => removeGlobal($, g, backup)))).filter(Boolean)
-  return errors.length
-    ? `Enabled ${name}; some globals were not removed:\n${errors.join('\n')}`
-    : `Adopted ${name}: on in ${targets.length} project(s), ${globals.length} global(s) removed (backup: ${shortPath(backup, p.home)}). Run /reload-plugins.`
+  // One at a time: claude plugin uninstall and claude mcp remove each rewrite the same settings files.
+  const errors: string[] = []
+  for (const g of globals) {
+    const error = await removeGlobal($, g, backup)
+    if (error) errors.push(error)
+  }
+  const still = new Set((await inventory($, p, await loadRegistry($, p))).items.map(i => i.id))
+  const left = globals.filter(g => still.has(g.id)).map(g => g.name)
+  const reload = await reloadAfter($, 'global')
+  return errors.length || left.length
+    ? `Enabled ${name}; some globals are still installed (${left.join(', ') || 'see below'}):\n${errors.join('\n')}${reload}`
+    : `Adopted ${name}: on in ${plural(onIn.length, 'project')}, ${plural(globals.length, 'global')} removed (backup: ${shortPath(backup, p.home)}).${reload}`
 }
 
 async function keepGlobal($: $T, opts: Opts, ids: string[], keep: boolean): Promise<string> {
@@ -607,7 +741,7 @@ async function removeOne($: $T, opts: Opts, id: string): Promise<string> {
   if (answer !== 'Remove') return `Kept ${item.name}.`
   const backup = await backupDir($, p)
   const error = await removeGlobal($, item, backup)
-  return error ?? `Removed ${item.name} (backup: ${shortPath(backup, p.home)}). Run /reload-plugins.`
+  return error ?? `Removed ${item.name} (backup: ${shortPath(backup, p.home)}).${await reloadAfter($, 'global')}`
 }
 
 /** The parts a kit installs, cut to fit a question. */
@@ -636,12 +770,13 @@ async function turnOnUsed($: $T, opts: Opts, rows: KitRow[], project: string, ho
   const failed: string[] = []
   for (const row of rows) {
     await update($, busy, () => `Enabling ${row.name}…`)
-    const text = await enable($, opts, row.name, project, false)
+    const text = await enable($, opts, row.name, project, false, false)
     if (!text.startsWith('Enabled')) failed.push(text)
   }
+  const reload = failed.length < rows.length ? await reloadAfter($, [project]) : ''
   return failed.length
-    ? `Enabled ${rows.length - failed.length}/${rows.length}:\n${failed.join('\n')}`
-    : `Enabled ${names} in ${where}. Run /reload-plugins there if a session is open.`
+    ? `Enabled ${rows.length - failed.length}/${rows.length}:\n${failed.join('\n')}${reload}`
+    : `Enabled ${names} in ${where}.${reload}`
 }
 
 /** Takes a kit out of every project where it sat unused for staleDays. */
@@ -660,13 +795,13 @@ async function prune($: $T, opts: Opts, name: string): Promise<string> {
   const failed: string[] = []
   for (const project of stale) {
     await update($, busy, () => `Removing ${name} from ${shortPath(project, p.home)}…`)
-    const { ok, out } = await runKit($, p, name, project, true)
-    if (ok) await markOn($, name, project, false)
-    else failed.push(`${shortPath(project, p.home)}: ${out}`)
+    const text = await enable($, opts, name, project, true, false)
+    if (!text.startsWith('Removed')) failed.push(text)
   }
+  const reload = failed.length < stale.length ? await reloadAfter($, stale) : ''
   return failed.length
-    ? `Removed ${name} from ${stale.length - failed.length}/${stale.length}:\n${failed.join('\n')}`
-    : `Removed ${name} from ${plural(stale.length, 'stale project')}. Run /reload-plugins there if a session is open.`
+    ? `Removed ${name} from ${stale.length - failed.length}/${stale.length}:\n${failed.join('\n')}${reload}`
+    : `Removed ${name} from ${plural(stale.length, 'stale project')}.${reload}`
 }
 
 /**
@@ -708,7 +843,9 @@ async function saveKit($: $T, opts: Opts, name: string, kit: Kit): Promise<strin
   const reg = await loadRegistry($, p)
   const isNew = !reg.kits[name]
   reg.kits[name] = { description: kit.description, parts: kit.parts }
+  if (registryError) return `Not saved:\n- ${registryError}`
   await saveRegistry($, p, reg)
+  $.ui.invalidate('prompt.context')
   const missing = await rcMissing($, p)
   return `${isNew ? 'Saved' : 'Updated'} kit ${name}: cc-${name} and cc-${name}-off are in ${shortPath(p.script, p.home)}` +
     `${missing.length ? ` (not loaded by ${listFiles(missing, p.home)} yet: Adopt adds the line)` : ''}. The person adopts it from the /scope pane.`
@@ -875,8 +1012,22 @@ export const register: Register = (on, options) => {
         required: ['ids'],
       },
     })
+    await $.tool.register({
+      name: 'enable_kit',
+      description: 'scopekeeper: turn on one of the person\'s kits in this project (local scope, kept out of git), after they confirm. Use when a request needs tools from a kit that is not on here.',
+      inputSchema: {
+        type: 'object',
+        properties: { name: { type: 'string', description: 'the kit name, as listed in the scopekeeperKits context' } },
+        required: ['name'],
+      },
+    })
     void (async () => {
       sessionProject = (await projectRoot($, e.cwd)) ?? undefined
+      const top = await $.process
+        .run(['git', '-C', e.cwd, 'rev-parse', '--show-toplevel'], { timeoutMs: 5000 })
+        .catch(() => undefined)
+      sessionTarget = top?.exitCode === 0 && top.stdout.trim() ? top.stdout.trim() : sessionProject
+      await lockDown($, await paths($, opts.rc))
       // The kits tab was the combos tab: help hidden there stays hidden.
       const hidden = ((await $.store.get('helpHidden')) as string[] | undefined)?.map(h => (h === 'combos' ? 'kits' : h))
       if (hidden?.length) await update($, helpHidden, () => hidden)
@@ -884,10 +1035,11 @@ export const register: Register = (on, options) => {
       await loadLedger($)
       await loadSessions($)
       const snap = await rescan($, opts)
+      resolveFirstScan(snap)
       // No historySince or sessions: backfilled by a version that did not record them; reading again only adds.
       const hasSessions = (await $.store.get('sessions')) !== undefined
       if (!snap.backfilledAt || !snap.historySince || !hasSessions) await backfill($, await paths($, opts.rc)).then(() => rescan($, opts))
-    })().catch(() => undefined)
+    })().catch(() => resolveFirstScan(null))
     return started
   })
 
@@ -934,10 +1086,34 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'mcp__scopekeeper__keep_global' }, async ($, e) => {
     const input = e as unknown as { ids?: string[]; keep?: boolean }
-    const text = await keepGlobal($, opts, input.ids ?? [], input.keep !== false)
+    const text = await keepGlobal($, opts, input.ids ?? [], input.keep !== false).catch((error: unknown) => `Not saved: ${String(error)}`)
     void rescan($, opts)
     return { result: text }
   })
+
+  // Claude asks; the person answers the same question Enter in the pane asks.
+  on('tool.call', { tool: 'mcp__scopekeeper__enable_kit' }, async ($, e) => {
+    const name = String((e as unknown as { name?: string }).name ?? '')
+    const snap = (await read($, snapshot)) ?? (await rescan($, opts))
+    const row = snap.kits.find(c => c.name === name)
+    if (!row) return { result: `No kit named "${name}". Kits: ${snap.kits.map(c => c.name).join(', ') || 'none'}.` }
+    if (!snap.cwdProject) return { result: 'This session is not in a project, so there is nowhere to turn a kit on.' }
+    if (statusIn(row, snap.cwdProject)?.status === 'on') return { result: `${name} is already on in this project.` }
+    const text = await act($, opts, `Turning on ${name}…`, () => toggleKit($, opts, row, snap.cwdProject, false, snap.home))
+    if (text === 'Cancelled.') return { result: `The person chose not to turn ${name} on.` }
+    return { result: text.startsWith('Enabled') ? `${text} Its tools are available from the next turn.` : text }
+  })
+
+  // Once per conversation: the kits not on here, so Claude can offer one rather than say it cannot.
+  on('prompt.context', async ($, e, next) => {
+    const result = await next(e)
+    const snap = (await read($, snapshot)) ?? (await Promise.race([
+      firstScan,
+      new Promise<null>(resolve => { $.clock.after(4000, () => resolve(null)) }),
+    ]))
+    const text = snap ? kitsContext(snap, TOOL('enable_kit')) : undefined
+    return text ? { ...result, blocks: [...result.blocks, { name: 'scopekeeperKits', text }] } : result
+  }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'scope' }, async ($, e) => {
     const [verb = '', arg = ''] = e.args.trim().split(/\s+/)
@@ -948,7 +1124,8 @@ export const register: Register = (on, options) => {
     }
     if (verb === 'backfill') return { text: await act($, opts, 'Backfilling usage…', () => backfill($, p)) }
     if (verb === 'enable' || verb === 'off') {
-      const project = sessionProject ?? e.args
+      const project = sessionTarget ?? sessionProject
+      if (!project) return { text: 'Not in a project: run /scope enable from a project folder.' }
       return { text: await act($, opts, `${verb === 'off' ? 'Removing' : 'Enabling'} ${arg}…`, () => enable($, opts, arg, project, verb === 'off')) }
     }
     if (verb === 'adopt') return { text: await act($, opts, `Adopting ${arg}…`, () => adopt($, opts, arg)) }
@@ -1024,6 +1201,8 @@ export const register: Register = (on, options) => {
 
     const home = snap.home
     const here = snap.cwdProject
+    // In a worktree, use was counted under the main checkout.
+    const usageHere = snap.cwdUsage ?? here
     const loading = !snap.backfilledAt
     const run = (label: string, work: () => Promise<string>) => () => act($, opts, label, work).then(() => undefined)
     const nameOf = (id: string) => snap.items.find(i => i.id === id)?.name ?? id
@@ -1081,7 +1260,7 @@ export const register: Register = (on, options) => {
     // ---- bundles to split out of the global scope
     const sugRow = (b: Bundle) => {
       const key = `sug:${b.id}`
-      const isHere = b.projects.some(pr => pr.project === here)
+      const isHere = b.projects.some(pr => pr.project === usageHere)
       const label = b.ids.length === 1 ? nameOf(b.ids[0]!) : `${b.name} (${b.ids.length})`
       return [
         <Button key={key} plain autoFocus={first(key)} onPress={openRow(key)}>
@@ -1101,7 +1280,7 @@ export const register: Register = (on, options) => {
             {b.ids.length > 1 && <Text>{b.ids.map(nameOf).join(', ')}</Text>}
             <Text dimColor>Used in:</Text>
             {b.projects.slice(0, 5).map(pr => (
-              <Text bold={pr.project === here}>
+              <Text bold={pr.project === usageHere}>
                 {'  '}{fit(shortPath(pr.project, home), W - 18)}<Text dimColor>{fit(count(pr.n), 6)}{ago(pr.last, snap.scannedAt)}</Text>
               </Text>
             ))}
@@ -1130,7 +1309,7 @@ export const register: Register = (on, options) => {
       ]
     }
 
-    const nothingToSplit = !snap.bundles.length && !snap.everywhere.length
+    const nothingToSplit = !snap.bundles.length && !snap.everywhere.length && !snap.unused.length
     const unsorted = snap.items.filter(i => i.claim === 'new').length
     const projectOnly = snap.bundles.reduce((n, b) => n + b.ids.length, 0)
     // Every count about the global scope, on one line.
@@ -1169,12 +1348,17 @@ export const register: Register = (on, options) => {
         {showHelp && helpBox(ui, 'local', W, () => void toggleHelp($, 'local'))}
         {doing !== '' && <Text color="yellow">⟳ {doing}</Text>}
         {snap.historyProblem !== '' && <Text color="red" wrap="truncate-end">! {snap.historyProblem}</Text>}
+        {/* A broken kits.json, or a kit left out of cc.sh, stops toggling: say so here too. */}
+        {snap.problems.filter(pr => pr.includes('kits.json') || pr.startsWith('kit ')).map(pr => <Text color="red" wrap="truncate-end">! {pr}</Text>)}
         <Text dimColor>{'─'.repeat(W)}</Text>
 
         {here !== '' && (
           <Box flexDirection="column">
             {heading('In this project')}
-            {snap.kits.length === 0 && <Text dimColor>No kits yet: make one local below.</Text>}
+            {snap.kits.length === 0 && (
+              <Text dimColor>{snap.bundles.length ? 'No kits yet: make one local below.'
+                : unsorted ? 'No kits yet: t lets Claude build them from your globals.' : 'No kits yet.'}</Text>
+            )}
             {hereKits.flatMap(hereRow)}
             {usedOff.length > 0 && (
               <Button key="turn-on-used" hotkey="y" plain dimColor={doing !== ''}
@@ -1190,6 +1374,9 @@ export const register: Register = (on, options) => {
           {snap.bundles.length > 0 && <Text dimColor wrap="truncate-end">Make these project-only to cut context elsewhere.</Text>}
           {loading && <Text dimColor>Reading your history to spot habits…</Text>}
           {!loading && nothingToSplit && <Text color="green">✓ Nothing to split out of your global setup.</Text>}
+          {!loading && !snap.bundles.length && snap.unused.length > 0 && (
+            <Text dimColor wrap="truncate-end">{plural(snap.unused.length, 'global')} never used: t lets Claude sort them.</Text>
+          )}
           {snap.bundles.flatMap(sugRow)}
           {snap.everywhere.length > 0 && everywhereRow()}
         </Box>

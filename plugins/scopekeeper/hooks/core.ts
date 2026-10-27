@@ -140,6 +140,9 @@ export function partLine(part: Part): string {
   }
 }
 
+/** A glob that names everything in its folder: `*`, `?*`, `**`. cc-<kit>-off would empty the folder. */
+const isCatchAll = (glob: string) => /^[*?]*$/.test(glob)
+
 export function validateKit(name: string, kit: Kit): string[] {
   const errors: string[] = []
   if (!KIT_NAME.test(name)) errors.push(`name "${name}": use a-z, 0-9 and -, starting with a letter`)
@@ -147,16 +150,35 @@ export function validateKit(name: string, kit: Kit): string[] {
   for (const part of kit.parts ?? []) {
     if (part.kind === 'plugin' && !/^[^@\s]+@[^@\s]+$/.test(part.id)) errors.push(`plugin id "${part.id}" must be name@marketplace`)
     if (part.kind === 'mcp' && (!part.name || typeof part.config !== 'object')) errors.push('an mcp part needs name and config')
-    if (part.kind === 'git-skills' && (!part.repo || !part.match)) errors.push('a git-skills part needs repo and match')
+    if (part.kind === 'git-skills') {
+      if (!part.repo || !part.match) errors.push('a git-skills part needs repo and match')
+      else if (!/^[A-Za-z0-9_*?-][A-Za-z0-9._*?-]*$/.test(part.match) || isCatchAll(part.match)) {
+        errors.push(`skills match "${part.match}" must name skill folders, like "remotion-*", not every folder`)
+      }
+      if (part.dir !== undefined && (part.dir.startsWith('/') || part.dir.split('/').includes('..'))) errors.push(`skills dir "${part.dir}" must be inside the repo`)
+      if (part.lib !== undefined && (!/^[A-Za-z0-9._-]+$/.test(part.lib) || /^\.+$/.test(part.lib))) errors.push(`lib "${part.lib}" must be a plain folder name`)
+    }
     if (part.kind === 'installer') {
       if (!part.run) errors.push('an installer part needs run')
       if (!part.paths?.length) errors.push('an installer part needs the paths it writes')
       for (const p of part.paths ?? []) {
-        if (p.startsWith('/') || p.includes('..')) errors.push(`installer path "${p}" must be relative to the project`)
+        const clean = p.replace(/\/+$/, '')
+        const segs = clean.split('/')
+        if (p.startsWith('/') || segs.includes('..')) errors.push(`installer path "${p}" must be relative to the project`)
+        else if (segs[0] !== '.claude' || segs.length < 3 || segs.some(s => s === '' || s === '.') || isCatchAll(segs.at(-1)!)) {
+          errors.push(`installer path "${p}" must name what it writes under .claude/, like ".claude/skills/impeccable"`)
+        }
       }
     }
   }
   return errors
+}
+
+/** Kits that fail validateKit, with why: left out of cc.sh. */
+export function invalidKits(registry: Registry): { name: string; errors: string[] }[] {
+  return Object.entries(registry.kits)
+    .map(([name, kit]) => ({ name, errors: validateKit(name, kit) }))
+    .filter(k => k.errors.length)
 }
 
 // ---------- shell generation (bash and zsh both source the file) ----------
@@ -169,14 +191,18 @@ export function libName(part: Extract<Part, { kind: 'git-skills' }>): string {
   return (m ? `${m[1]}-${m[2]}` : 'skills').replace(/[^A-Za-z0-9._-]/g, '-')
 }
 
-/** `find`-based removal of one project-relative path, which may end in a glob. */
+/** `find`-based removal of one project-relative path, which may end in a glob; a missing folder is nothing to remove. */
 function removePath(path: string): string {
   const clean = path.replace(/\/+$/, '')
   const cut = clean.lastIndexOf('/')
   const dir = cut < 0 ? '.' : clean.slice(0, cut)
   const base = clean.slice(cut + 1)
-  return `[ -d ${q(dir)} ] && find ${q(dir)} -mindepth 1 -maxdepth 1 -name ${q(base)} -exec rm -rf {} +`
+  return `{ [ ! -d ${q(dir)} ] || find ${q(dir)} -mindepth 1 -maxdepth 1 -name ${q(base)} -exec rm -rf {} +; }`
 }
+
+/** Where a git-skills part's skills live in its clone. */
+export const skillsSource = (part: Extract<Part, { kind: 'git-skills' }>, libRoot: string) =>
+  `${libRoot}/${libName(part)}/${part.dir ?? 'skills'}`
 
 function onLines(part: Part, libRoot: string): string[] {
   switch (part.kind) {
@@ -189,14 +215,10 @@ function onLines(part: Part, libRoot: string): string[] {
       ]
     case 'git-skills': {
       const lib = `${libRoot}/${libName(part)}`
-      const src = `${lib}/${part.dir ?? 'skills'}`
       return [
         `[ -d ${q(lib)} ] || git clone --depth 1 -q ${q(part.repo)} ${q(lib)} || return 1`,
         `git -C ${q(lib)} pull -q --ff-only 2>/dev/null`,
-        'mkdir -p .claude/skills',
-        removePath(`.claude/skills/${part.match}`),
-        `find ${q(src)} -mindepth 1 -maxdepth 1 -name ${q(part.match)} -exec cp -R {} .claude/skills/ \\; || return 1`,
-        `_sk_exclude ${q(`.claude/skills/${part.match}`)}`,
+        `_sk_skills_on ${q(skillsSource(part, libRoot))} ${q(part.match)} || return 1`,
       ]
     }
     case 'installer':
@@ -204,16 +226,17 @@ function onLines(part: Part, libRoot: string): string[] {
   }
 }
 
-function offLines(part: Part): string[] {
+/** Each line sets _sk_rc=1 when its part could not be removed; one that was not there counts as removed. */
+function offLines(part: Part, libRoot: string): string[] {
   switch (part.kind) {
     case 'plugin':
-      return [`claude plugin uninstall ${q(part.id)} -s local`]
+      return [`_sk_try claude plugin uninstall ${q(part.id)} -s local || _sk_rc=1`]
     case 'mcp':
-      return [`claude mcp remove ${q(part.name)} -s local`]
+      return [`_sk_try claude mcp remove ${q(part.name)} -s local || _sk_rc=1`]
     case 'git-skills':
-      return [removePath(`.claude/skills/${part.match}`)]
+      return [`_sk_skills_off ${q(skillsSource(part, libRoot))} ${q(part.match)} || _sk_rc=1`]
     case 'installer':
-      return part.paths.map(removePath)
+      return part.paths.map(p => `${removePath(p)} || _sk_rc=1`)
   }
 }
 
@@ -240,16 +263,61 @@ export function generateScript(registry: Registry, libRoot: string): string {
     '    grep -qxF "$_sk_p" "$_sk_ex" 2>/dev/null || printf \'%s\\n\' "$_sk_p" >> "$_sk_ex"',
     '  done',
     '}',
+    '# Runs a removal; one that finds nothing to remove succeeds.',
+    '_sk_try() {',
+    '  _sk_out=$("$@" 2>&1) && return 0',
+    '  case "$_sk_out" in',
+    '    *"not installed"*|*"Not installed"*|*"not found"*|*"No MCP server"*|*"does not exist"*) return 0 ;;',
+    '  esac',
+    '  printf \'%s\\n\' "$_sk_out" >&2',
+    '  return 1',
+    '}',
+    '# The skill folders in clone $1 named like $2: only those are copied in, and only those removed.',
+    '_sk_skills_in() {',
+    '  find "$1" -mindepth 1 -maxdepth 1 -name "$2" ! -name \'.*\' -exec basename {} \\; 2>/dev/null',
+    '}',
+    '_sk_skills_on() {',
+    '  _sk_names=$(_sk_skills_in "$1" "$2")',
+    '  [ -n "$_sk_names" ] || { echo "scopekeeper: no skill named $2 in $1" >&2; return 1; }',
+    '  mkdir -p .claude/skills',
+    '  while IFS= read -r _sk_b; do',
+    '    [ -n "$_sk_b" ] || continue',
+    '    rm -rf ".claude/skills/$_sk_b"',
+    '    cp -R "$1/$_sk_b" .claude/skills/ || return 1',
+    '    _sk_exclude ".claude/skills/$_sk_b"',
+    '  done <<EOF',
+    '$_sk_names',
+    'EOF',
+    '}',
+    '_sk_skills_off() {',
+    '  [ -d "$1" ] || { echo "scopekeeper: $1 is gone, so its skills cannot be told from yours; .claude/skills left as it is" >&2; return 1; }',
+    '  _sk_names=$(_sk_skills_in "$1" "$2")',
+    '  while IFS= read -r _sk_b; do',
+    '    [ -n "$_sk_b" ] || continue',
+    '    rm -rf ".claude/skills/$_sk_b" || return 1',
+    '  done <<EOF',
+    '$_sk_names',
+    'EOF',
+    '}',
   ]
+  const bad = new Set(invalidKits(registry).map(k => k.name))
   for (const [name, kit] of Object.entries(registry.kits).sort(([a], [b]) => a.localeCompare(b))) {
+    if (bad.has(name)) {
+      out.push('', `# ${name}: left out, it does not pass validation (see /scope)`)
+      continue
+    }
     const what = kit.description ?? kit.parts.map(partSummary).join(' + ')
     out.push('', `# ${what.replace(/\n/g, ' ')}`)
     out.push(`cc-${name}() {`, '  _sk_guard || return 1')
     for (const line of kit.parts.flatMap(p => onLines(p, libRoot))) out.push(`  ${line}`)
     out.push(`  echo "cc-${name}: enabled in $(pwd -P). Run /reload-plugins in open sessions."`, '}')
-    out.push(`cc-${name}-off() {`, '  _sk_guard || return 1')
-    for (const line of kit.parts.flatMap(offLines)) out.push(`  ${line}`)
-    out.push(`  echo "cc-${name}: removed from $(pwd -P)."`, '}')
+    out.push(`cc-${name}-off() {`, '  _sk_guard || return 1', '  _sk_rc=0')
+    for (const line of kit.parts.flatMap(p => offLines(p, libRoot))) out.push(`  ${line}`)
+    out.push(
+      `  [ "$_sk_rc" = 0 ] || { echo "cc-${name}-off: some parts were not removed from $(pwd -P)" >&2; return 1; }`,
+      `  echo "cc-${name}: removed from $(pwd -P)."`,
+      '}',
+    )
   }
   return `${out.join('\n')}\n`
 }
@@ -307,6 +375,14 @@ export function addUse(ledger: Ledger, key: string, project: string, at: number,
   cur.last = Math.max(cur.last, at)
 }
 
+/** Adds `delta` (uses recorded since the last flush) onto `into`. */
+export function mergeLedger(into: Ledger, delta: Ledger): Ledger {
+  for (const [key, byProject] of Object.entries(delta)) {
+    for (const [project, use] of Object.entries(byProject)) addUse(into, key, project, use.last, use.n)
+  }
+  return into
+}
+
 // ---------- habits and bundles ----------
 
 /** session id -> the usage keys seen in it. */
@@ -327,6 +403,15 @@ export function coUse(sessions: Sessions): CoUse {
     }
   }
   return out
+}
+
+/** Adds `delta` onto `into`: the later time, the keys of both. */
+export function mergeSessions(into: Sessions, delta: Sessions): Sessions {
+  for (const [id, s] of Object.entries(delta)) {
+    const cur = into[id]
+    into[id] = { at: Math.max(s.at, cur?.at ?? 0), keys: [...new Set([...(cur?.keys ?? []), ...s.keys])] }
+  }
+  return into
 }
 
 /** Keeps the `max` most recent sessions. */
@@ -472,6 +557,21 @@ export function band(snap: Snapshot, staleDays = 30): Band | undefined {
   // Past the cap, the kits not fully on stay, then the idle ones; the rest keep their alphabetical place.
   const shown = new Set([...here.filter(k => k.glyph !== '●'), ...here.filter(k => k.isIdle), ...here].slice(0, LIGHTS))
   return { lights: here.filter(k => shown.has(k)), more: Math.max(0, here.length - LIGHTS) }
+}
+
+/**
+ * What Claude is told once per conversation: the kits not on in this project, so it can offer one
+ * (enable_kit) instead of saying it cannot. Undefined outside a project or when every kit is on.
+ */
+export function kitsContext(snap: Pick<Snapshot, 'cwdProject' | 'kits'>, tool: string): string | undefined {
+  if (!snap.cwdProject) return undefined
+  const off = snap.kits.filter(c => c.projects.find(p => p.project === snap.cwdProject)?.status !== 'on')
+  if (!off.length) return undefined
+  return [
+    `These tool kits are installed on this machine but not on in this project, so their tools are not loaded here.`,
+    `When the person's request needs one of them, offer to turn it on with ${tool} (the person confirms); its tools load from the next turn.`,
+    ...off.map(c => `- ${c.name}: ${clip(c.summary.replace(/\s+/g, ' '), 80)}`),
+  ].join('\n')
 }
 
 /** The band as one line of text: `● vercel  ○ remotion`. */

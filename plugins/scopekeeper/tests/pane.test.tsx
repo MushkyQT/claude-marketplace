@@ -290,6 +290,29 @@ test('moving onto a suggestion opens nothing; Enter opens it with make local and
   await again.unmount()
 })
 
+test('with every global unused, the daily pane does not say there is nothing to split', async ($, on) => {
+  seed(on, { ...SNAP, kits: [], bundles: [], everywhere: [], unused: ['skill:a', 'skill:b'] })
+  const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /Nothing to split/ })).toBe(undefined)
+  expect(await ui.find({ type: 'Text', text: /2 globals never used: t lets Claude sort them/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /make one local below/ })).toBe(undefined)
+  await ui.unmount()
+})
+
+test('a kits.json that does not parse is named in the daily pane', async ($, on) => {
+  seed(on, { ...SNAP, problems: ['~/.claude/scopekeeper/kits.json does not parse (x): fix it by hand'] })
+  const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /kits.json does not parse/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('in a worktree, the daily pane marks suggestions used in its main checkout as here', async ($, on) => {
+  seed(on, { ...SNAP, cwdProject: '/w/app-wt', cwdUsage: '/w/app' })
+  const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })
+  expect((await ui.find({ key: 'sug:skill:improve' }))?.text.includes('· here')).toBe(true)
+  await ui.unmount()
+})
+
 test('outside a project the daily pane only offers what to make local', async ($, on) => {
   seed(on, { ...SNAP, cwdProject: '' })
   const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { DAY, ago, band, claimOf, classify, clip, coUse, kitUsage, day, family, generateScript, isStale, lightInfo, partLine, partUsage, q, rcLineFor, rcPlan, bandText, suggest, validateKit } from '../hooks/core'
+import { DAY, ago, band, claimOf, classify, clip, coUse, kitUsage, kitsContext, day, family, generateScript, invalidKits, isStale, lightInfo, mergeLedger, mergeSessions, partLine, partUsage, q, rcLineFor, rcPlan, bandText, suggest, validateKit } from '../hooks/core'
 import type { ItemRow, KitProject, KitRow, Snapshot } from '../types'
 import type { Registry } from '../hooks/core'
 
@@ -64,6 +64,67 @@ test('kits that would write outside the project are refused', async () => {
   expect(validateKit('x', { parts: [{ kind: 'installer', run: 'true', paths: ['../oops'] }] }).length).toBe(1)
   expect(validateKit('x', { parts: [{ kind: 'plugin', id: 'genjutsu' }] }).length).toBe(1)
   expect(validateKit('design', REGISTRY.kits.design!)).toEqual([])
+})
+
+test('a kit that would empty a folder of the project is refused', async () => {
+  const skills = (match: string) => validateKit('x', { parts: [{ kind: 'git-skills', repo: 'https://g/x.git', match }] })
+  expect(skills('*').length).toBe(1)
+  expect(skills('?*').length).toBe(1)
+  expect(skills('../x').length).toBe(1)
+  expect(skills('.hidden').length).toBe(1)
+  expect(skills('remotion-*')).toEqual([])
+  const writes = (path: string) => validateKit('x', { parts: [{ kind: 'installer', run: 'true', paths: [path] }] })
+  for (const path of ['*', '.', 'src', '.claude/skills/*', '.claude/skills', '.claude/agents/']) expect(writes(path).length, path).toBe(1)
+  expect(writes('.claude/skills/impeccable/')).toEqual([])
+  expect(writes('.claude/agents/impeccable-*')).toEqual([])
+  expect(validateKit('x', { parts: [{ kind: 'git-skills', repo: 'r', match: 'a-*', lib: '..' }] }).length).toBe(1)
+  expect(validateKit('x', { parts: [{ kind: 'git-skills', repo: 'r', match: 'a-*', dir: '../up' }] }).length).toBe(1)
+})
+
+test('skills are copied and removed by the names in the clone, never by a glob in the project', async () => {
+  const script = generateScript(REGISTRY, '/l')
+  expect(script.includes("_sk_skills_on '/l/remotion-dev-skills/skills' 'remotion-*' || return 1")).toBe(true)
+  expect(script.includes("_sk_skills_off '/l/remotion-dev-skills/skills' 'remotion-*' || _sk_rc=1")).toBe(true)
+  expect(script.includes("find '.claude/skills' -mindepth 1 -maxdepth 1 -name 'remotion-*'")).toBe(false)
+})
+
+test('cc-<kit>-off fails when a part was not removed', async () => {
+  const script = generateScript(REGISTRY, '/l')
+  const start = script.indexOf('cc-design-off() {')
+  const off = script.slice(start, script.indexOf('\n}\n', start) + 2)
+  expect(off.includes("_sk_try claude plugin uninstall 'genjutsu@genjutsu' -s local || _sk_rc=1")).toBe(true)
+  expect(off.includes('return 1')).toBe(true)
+  expect(off.trimEnd().endsWith('removed from $(pwd -P)."\n}')).toBe(true)
+})
+
+test('a kit that fails validation is left out of cc.sh, the others stay', async () => {
+  const reg: Registry = { ...REGISTRY, kits: { ...REGISTRY.kits, wipe: { parts: [{ kind: 'installer', run: 'true', paths: ['*'] }] } } }
+  expect(invalidKits(reg).map(k => k.name)).toEqual(['wipe'])
+  const script = generateScript(reg, '/l')
+  expect(script.includes('cc-wipe')).toBe(false)
+  expect(script.includes('cc-design() {')).toBe(true)
+})
+
+test('usage from two sessions adds up instead of one writing over the other', async () => {
+  const stored = { 'skill:a': { '/p': { n: 3, last: 10 } } }
+  // Another session flushed in between: this one adds its own uses onto what is there now.
+  const merged = mergeLedger(stored, { 'skill:a': { '/p': { n: 2, last: 20 } }, 'mcp:b': { '/q': { n: 1, last: 5 } } })
+  expect(merged).toEqual({ 'skill:a': { '/p': { n: 5, last: 20 } }, 'mcp:b': { '/q': { n: 1, last: 5 } } })
+  expect(mergeSessions({ s1: { at: 5, keys: ['skill:a'] } }, { s1: { at: 9, keys: ['mcp:b'] }, s2: { at: 1, keys: ['x'] } }))
+    .toEqual({ s1: { at: 9, keys: ['skill:a', 'mcp:b'] }, s2: { at: 1, keys: ['x'] } })
+})
+
+test('Claude is told the kits not on in this project', async () => {
+  const kit = (name: string, status?: KitProject['status']): KitRow => ({
+    name, summary: `${name} tools`, parts: [], globals: [],
+    projects: status ? [{ project: '/p', status, n: 1, last: 1, since: 0 }] : [],
+  })
+  const text = kitsContext({ cwdProject: '/p', kits: [kit('on', 'on'), kit('off', 'off'), kit('half', 'partial'), kit('never')] }, 'enable_kit')!
+  expect(text.includes('enable_kit')).toBe(true)
+  expect(text.includes('- on:')).toBe(false)
+  for (const name of ['off', 'half', 'never']) expect(text.includes(`- ${name}: ${name} tools`)).toBe(true)
+  expect(kitsContext({ cwdProject: '', kits: [kit('off', 'off')] }, 't')).toBe(undefined)
+  expect(kitsContext({ cwdProject: '/p', kits: [kit('on', 'on')] }, 't')).toBe(undefined)
 })
 
 test('the shell decides which startup files load cc.sh', async () => {
