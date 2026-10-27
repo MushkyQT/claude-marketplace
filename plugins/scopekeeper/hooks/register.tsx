@@ -170,10 +170,11 @@ let sessions: Sessions | undefined
 let pendingUse: Ledger = {}
 let pendingSessions: Sessions = {}
 let flushTimer: { cancel: () => void } | undefined
-/** The project usage is counted under: a git project's main checkout, worktrees folded in. */
+/**
+ * This session's project: a git project's main checkout, worktrees folded in. Claude Code loads a
+ * worktree's local plugins, MCP servers, skills and agents from its main checkout, so kits live there too.
+ */
 let sessionProject: string | undefined
-/** Where kits are turned on for this session: the checkout (worktree included) the session runs in. */
-let sessionTarget: string | undefined
 let sessionId: string | undefined
 let knownPlugins: string[] = []
 let knownKeys: string[] = []
@@ -440,15 +441,9 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
     ...Object.values(installed).flatMap(es => es.flatMap(e => (e.projectPath ? [e.projectPath] : []))),
     ...Object.entries(global.projects ?? {}).flatMap(([pr, c]) => (Object.keys(c.mcpServers ?? {}).length ? [pr] : [])),
     ...(sessionProject ? [sessionProject] : []),
-    ...(sessionTarget ? [sessionTarget] : []),
   ])]
   const ok = new Set(await eligible($, p, allProjects))
-  // In a worktree, kits are turned on in the worktree, while use is counted under the main checkout.
-  const cwdProject = sessionTarget && ok.has(sessionTarget) ? sessionTarget
-    : sessionProject && ok.has(sessionProject) ? sessionProject : ''
-  const cwdUsage = sessionProject && ok.has(sessionProject) ? sessionProject : cwdProject
-  const useIn = (used: Map<string, { n: number; last: number }>, project: string) =>
-    used.get(project) ?? (project === cwdProject && cwdUsage !== cwdProject ? used.get(cwdUsage) : undefined)
+  const cwdProject = sessionProject && ok.has(sessionProject) ? sessionProject : ''
 
   const rows: ItemRow[] = items.map(item => {
     const uses = [...usesOf([item.id])].filter(([pr]) => ok.has(pr))
@@ -465,7 +460,7 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
     for (const project of [...ok]) {
       const states = await Promise.all(kit.parts.map(part => partOn($, p, part, project, installed, global)))
       const on = states.filter(Boolean).length
-      const use = useIn(used, project)
+      const use = used.get(project)
       const key = onKey(name, project)
       if (on === 0 && key in onSince) {
         delete onSince[key]
@@ -513,10 +508,9 @@ async function scan($: $T, rcOption: string): Promise<Snapshot> {
     scannedAt: now,
     home: p.home,
     cwdProject,
-    ...(cwdUsage !== cwdProject ? { cwdUsage } : {}),
     items: rows,
     kits: kits.sort((a, b) => a.name.localeCompare(b.name)),
-    ...suggest(rows, coUse(await loadSessions($)), cwdUsage),
+    ...suggest(rows, coUse(await loadSessions($)), cwdProject),
     backfilledAt: Number((await $.store.get('backfilledAt')) ?? 0),
     historySince: Number((await $.store.get('historySince')) ?? 0),
     historyProblem: backfillProblem,
@@ -626,9 +620,8 @@ async function removeGlobal($: $T, item: GlobalItem, backup: string): Promise<st
  * once the session is idle. Returns what to tell the person about open sessions.
  */
 async function reloadAfter($: $T, touched: string[] | 'global'): Promise<string> {
-  const current = sessionTarget ?? sessionProject
-  const isHere = touched === 'global' || (current !== undefined && touched.includes(current))
-  const elsewhere = touched !== 'global' && touched.some(t => t !== current)
+  const isHere = touched === 'global' || (sessionProject !== undefined && touched.includes(sessionProject))
+  const elsewhere = touched !== 'global' && touched.some(t => t !== sessionProject)
   if (!isHere) return ' Run /reload-plugins there if a session is open.'
   const canReload = (await $.command.list().catch(() => [])).some(c => c.name === 'reload-plugins')
   if (!canReload) return ' Run /reload-plugins.'
@@ -1023,10 +1016,6 @@ export const register: Register = (on, options) => {
     })
     void (async () => {
       sessionProject = (await projectRoot($, e.cwd)) ?? undefined
-      const top = await $.process
-        .run(['git', '-C', e.cwd, 'rev-parse', '--show-toplevel'], { timeoutMs: 5000 })
-        .catch(() => undefined)
-      sessionTarget = top?.exitCode === 0 && top.stdout.trim() ? top.stdout.trim() : sessionProject
       await lockDown($, await paths($, opts.rc))
       // The kits tab was the combos tab: help hidden there stays hidden.
       const hidden = ((await $.store.get('helpHidden')) as string[] | undefined)?.map(h => (h === 'combos' ? 'kits' : h))
@@ -1124,7 +1113,7 @@ export const register: Register = (on, options) => {
     }
     if (verb === 'backfill') return { text: await act($, opts, 'Backfilling usage…', () => backfill($, p)) }
     if (verb === 'enable' || verb === 'off') {
-      const project = sessionTarget ?? sessionProject
+      const project = sessionProject
       if (!project) return { text: 'Not in a project: run /scope enable from a project folder.' }
       return { text: await act($, opts, `${verb === 'off' ? 'Removing' : 'Enabling'} ${arg}…`, () => enable($, opts, arg, project, verb === 'off')) }
     }
@@ -1201,8 +1190,6 @@ export const register: Register = (on, options) => {
 
     const home = snap.home
     const here = snap.cwdProject
-    // In a worktree, use was counted under the main checkout.
-    const usageHere = snap.cwdUsage ?? here
     const loading = !snap.backfilledAt
     const run = (label: string, work: () => Promise<string>) => () => act($, opts, label, work).then(() => undefined)
     const nameOf = (id: string) => snap.items.find(i => i.id === id)?.name ?? id
@@ -1260,7 +1247,7 @@ export const register: Register = (on, options) => {
     // ---- bundles to split out of the global scope
     const sugRow = (b: Bundle) => {
       const key = `sug:${b.id}`
-      const isHere = b.projects.some(pr => pr.project === usageHere)
+      const isHere = b.projects.some(pr => pr.project === here)
       const label = b.ids.length === 1 ? nameOf(b.ids[0]!) : `${b.name} (${b.ids.length})`
       return [
         <Button key={key} plain autoFocus={first(key)} onPress={openRow(key)}>
@@ -1280,7 +1267,7 @@ export const register: Register = (on, options) => {
             {b.ids.length > 1 && <Text>{b.ids.map(nameOf).join(', ')}</Text>}
             <Text dimColor>Used in:</Text>
             {b.projects.slice(0, 5).map(pr => (
-              <Text bold={pr.project === usageHere}>
+              <Text bold={pr.project === here}>
                 {'  '}{fit(shortPath(pr.project, home), W - 18)}<Text dimColor>{fit(count(pr.n), 6)}{ago(pr.last, snap.scannedAt)}</Text>
               </Text>
             ))}

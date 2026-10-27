@@ -12,7 +12,7 @@ Keep your global Claude Code setup lean. scopekeeper shows every plugin, skill, 
 - **Takes effect right away.** A kit turned on or off in the project you are in, or a global removed, reloads plugins in this session once it is idle. Other open sessions in that project still need `/reload-plugins`.
 - **Lets Claude offer a kit.** At the start of each conversation Claude is told which of your kits are not on in this project, a line each. When a request needs one, Claude can turn it on with the `enable_kit` tool, after you confirm, as with Enter in the pane.
 
-Everything it enables stays out of git: plugins and MCP servers at local scope, copied files listed in `.git/info/exclude`. In a git worktree, kits are turned on in the worktree itself, while usage counts toward the main checkout.
+Everything it enables stays out of git: plugins and MCP servers at local scope, copied files listed in `.git/info/exclude`. In a git worktree, kits follow the main checkout: Claude Code loads a worktree's local plugins, MCP servers, skills and agents from there, so a kit on in the project is on in all its worktrees.
 
 Turning a kit off removes only what it put there: for skills from a git repo, the folders named in its clone, so a skill of your own with a similar name stays. Installer paths must name what they write under `.claude/` (`.claude/skills/impeccable`, `.claude/agents/impeccable-*`); a path like `*` or `.claude/skills/*` is refused when the kit is saved.
 

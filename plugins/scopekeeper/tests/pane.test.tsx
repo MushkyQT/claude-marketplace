@@ -306,13 +306,6 @@ test('a kits.json that does not parse is named in the daily pane', async ($, on)
   await ui.unmount()
 })
 
-test('in a worktree, the daily pane marks suggestions used in its main checkout as here', async ($, on) => {
-  seed(on, { ...SNAP, cwdProject: '/w/app-wt', cwdUsage: '/w/app' })
-  const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })
-  expect((await ui.find({ key: 'sug:skill:improve' }))?.text.includes('· here')).toBe(true)
-  await ui.unmount()
-})
-
 test('outside a project the daily pane only offers what to make local', async ($, on) => {
   seed(on, { ...SNAP, cwdProject: '' })
   const ui = await $.ui.mount({ ...DAILY, surface: 'terminal' })

@@ -56,10 +56,7 @@ export type Bundle = {
 export type Snapshot = {
   scannedAt: number
   home: string
-  /** Where this session turns kits on: its checkout, a worktree's own folder in a worktree. '' outside a project. */
   cwdProject: string
-  /** In a worktree: the main checkout, which this session's use is counted under. Absent when it is cwdProject. */
-  cwdUsage?: string
   items: ItemRow[]
   kits: KitRow[]
   /** Suggested from the unsorted globals: bundles to make local. */
